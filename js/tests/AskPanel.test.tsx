@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { beforeEach } from "vitest";
 import { AskPanel } from "../src/AskPanel";
+import { clearAskPanelStatusCache } from "../src/useAskPanel";
+
+beforeEach(() => clearAskPanelStatusCache());
 import { Prose } from "../src/Prose";
 import { STATUS, SUMMARY, frames, json, mockFetch, sse } from "./helpers";
 

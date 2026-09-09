@@ -50,6 +50,18 @@ export interface AskPanelTranscriptProps {
   className?: string;
 }
 
+/** Drop a leading paragraph equal to the title (the `payload.as_text()` form, or the
+ *  `**title**` line older summaries carried) so dedup against the summary works. */
+export function stripLeadingTitle(text: string, title: string): string {
+  const t = text.trim();
+  const first = t.split(/\n\s*\n/, 1)[0]?.trim() ?? "";
+  const bare = first.replace(/^\*\*(.+)\*\*$/, "$1").trim();
+  if (bare && bare.toLowerCase() === title.trim().toLowerCase()) {
+    return t.slice(first.length).trim();
+  }
+  return t;
+}
+
 /**
  * Read-only view of a stored escalation for a host's inbox / triage page: title, kind /
  * mode / screen chips, the details, the structured summary with mode-aware labels and an
@@ -61,8 +73,9 @@ export function AskPanelTranscript({ record, collapsed = true, hideTitle, labels
   const summary = record.summary ?? null;
   const mode: Mode = summary?.mode ?? record.mode;
   const SL = L.summary[mode] ?? L.summary.interview;
-  const details = record.details?.trim() ?? "";
-  const showDetails = details.length > 0 && details !== summary?.summary?.trim();
+  const details = stripLeadingTitle(record.details ?? "", record.title);
+  const summaryText = stripLeadingTitle(summary?.summary ?? "", record.title);
+  const showDetails = details.length > 0 && details !== summaryText;
   const sections = summary
     ? (
         [

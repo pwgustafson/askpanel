@@ -60,6 +60,20 @@ describe("AskPanelTranscript", () => {
     expect(container.querySelector("details")!.hasAttribute("open")).toBe(true);
   });
 
+  it("dedups details stored via as_text() (title folded in) against the summary", () => {
+    const rec: EscalationRecord = { ...base, details: `${base.title}\n\n${base.summary!.summary}` };
+    render(<AskPanelTranscript record={rec} />);
+    expect(screen.queryByText("Details")).toBeNull();
+    expect(screen.getAllByText("How do I share?", { selector: "h3" })).toHaveLength(1);
+  });
+
+  it("still shows details that merely start with the title but differ", () => {
+    const rec: EscalationRecord = { ...base, details: `${base.title}\n\nActually something else.` };
+    render(<AskPanelTranscript record={rec} />);
+    expect(screen.getByText("Details")).toBeTruthy();
+    expect(screen.getByText("Actually something else.")).toBeTruthy();
+  });
+
   it("handles a bug report with no transcript or summary", () => {
     render(<AskPanelTranscript record={{ mode: "help", kind: "bug", title: "Broken", details: "It broke", transcript: [] }} />);
     expect(screen.getByText("Bug report")).toBeTruthy();

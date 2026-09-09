@@ -10,7 +10,7 @@ export type {
   UseAskPanelStatusOptions,
   AskPanelStatusResult,
 } from "./useAskPanel";
-export { AskPanelTranscript, defaultTranscriptLabels } from "./AskPanelTranscript";
+export { AskPanelTranscript, defaultTranscriptLabels, stripLeadingTitle } from "./AskPanelTranscript";
 export type { AskPanelTranscriptProps, AskPanelTranscriptLabels } from "./AskPanelTranscript";
 export { createClient, readSSE, checkProtocol, normalizeHeaders, AskPanelError } from "./client";
 export type {

@@ -150,31 +150,36 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
     abortRef.current = null;
   }, []);
 
-  const refreshStatus = useCallback(async () => {
-    const controller = new AbortController();
-    try {
-      const s = await client.status({ signal: controller.signal });
-      if (!mountedRef.current) return;
-      setStatus(s);
-      setStatusError(null);
-      onStatusRef.current?.(s);
-    } catch (e) {
-      if (!mountedRef.current) return;
-      const err = toError(e);
-      if (err.code === "aborted") return;
-      setStatusError(report(err));
-      setStatus(null);
-    }
-  }, [client, report]);
+  const probeStatus = useCallback(
+    async (force: boolean) => {
+      try {
+        const s = await fetchStatusShared(base, client, force);
+        if (!mountedRef.current) return;
+        setStatus(s);
+        setStatusError(null);
+        onStatusRef.current?.(s);
+      } catch (e) {
+        if (!mountedRef.current) return;
+        const err = toError(e);
+        if (err.code === "aborted") return;
+        setStatusError(report(err));
+        setStatus(null);
+      }
+    },
+    [base, client, report],
+  );
+
+  /** Re-probe `/status`, bypassing the per-base memo. */
+  const refreshStatus = useCallback(() => probeStatus(true), [probeStatus]);
 
   useEffect(() => {
     mountedRef.current = true;
-    if (!skipStatus) void refreshStatus();
+    if (!skipStatus) void probeStatus(false);
     return () => {
       mountedRef.current = false;
       abortRef.current?.abort();
     };
-  }, [refreshStatus, skipStatus]);
+  }, [probeStatus, skipStatus]);
 
   const readContext = useCallback((): string | undefined => {
     const c = getContextRef.current?.();
@@ -431,43 +436,60 @@ export function useAskPanelStatus(options: UseAskPanelStatusOptions): AskPanelSt
   const [loading, setLoading] = useState(!cached);
   const mounted = useRef(true);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    let promise = statusInflight.get(base);
-    if (!promise) {
-      promise = client.status().then((s) => {
-        statusCache.set(base, s);
-        return s;
-      });
-      statusInflight.set(base, promise);
-      promise.finally(() => statusInflight.delete(base)).catch(() => {});
-    }
-    try {
-      const s = await promise;
-      if (!mounted.current) return;
-      setStatus(s);
-      setError(null);
-    } catch (e) {
-      if (!mounted.current) return;
-      setError(toError(e));
-    } finally {
-      if (mounted.current) setLoading(false);
-    }
-  }, [base, client]);
+  const probe = useCallback(
+    async (force: boolean) => {
+      setLoading(true);
+      try {
+        const s = await fetchStatusShared(base, client, force);
+        if (!mounted.current) return;
+        setStatus(s);
+        setError(null);
+      } catch (e) {
+        if (!mounted.current) return;
+        setError(toError(e));
+      } finally {
+        if (mounted.current) setLoading(false);
+      }
+    },
+    [base, client],
+  );
+
+  /** Re-probe `/status`, bypassing the per-base memo. */
+  const refresh = useCallback(() => probe(true), [probe]);
 
   useEffect(() => {
     mounted.current = true;
-    if (!statusCache.has(base)) void refresh();
+    void probe(false);
     return () => {
       mounted.current = false;
     };
-  }, [base, refresh]);
+  }, [probe]);
 
   return { status, enabled: status?.enabled ?? false, loading, error, refresh };
 }
 
+// One `/status` request per base per page, shared by useAskPanel (the panel's own
+// probe), useAskPanelStatus (a trigger), and React StrictMode's double effects.
 const statusCache = new Map<string, StatusOut>();
 const statusInflight = new Map<string, Promise<StatusOut>>();
+
+function fetchStatusShared(base: string, client: AskPanelClient, force: boolean): Promise<StatusOut> {
+  if (!force) {
+    const cached = statusCache.get(base);
+    if (cached) return Promise.resolve(cached);
+    const inflight = statusInflight.get(base);
+    if (inflight) return inflight;
+  }
+  const promise = client.status().then((s) => {
+    statusCache.set(base, s);
+    return s;
+  });
+  statusInflight.set(base, promise);
+  promise.finally(() => {
+    if (statusInflight.get(base) === promise) statusInflight.delete(base);
+  }).catch(() => {});
+  return promise;
+}
 
 /** Forget memoised `/status` results (tests; after login/logout). */
 export function clearAskPanelStatusCache(): void {

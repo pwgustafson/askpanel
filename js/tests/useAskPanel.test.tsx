@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { clearAskPanelStatusCache, useAskPanel, useAskPanelStatus } from "../src/useAskPanel";
 import { STATUS, SUMMARY, frames, json, mockFetch, sse } from "./helpers";
 
+import { beforeEach } from "vitest";
+
+beforeEach(() => clearAskPanelStatusCache());
+
 describe("useAskPanel", () => {
   it("probes /status once on mount and exposes enabled + starters", async () => {
     const fetch = mockFetch({ "/status": () => json(STATUS) });
@@ -249,6 +253,23 @@ describe("onStatus / onError / useAskPanelStatus", () => {
       await result.current.send("q");
     });
     expect(errors).toEqual([401]);
+  });
+
+  it("the panel hook and useAskPanelStatus share one /status request per base", async () => {
+    clearAskPanelStatusCache();
+    const fetch = mockFetch({ "/status": () => json(STATUS) });
+    const trigger = renderHook(() => useAskPanelStatus({ base: "/api/askpanel", fetch }));
+    const panel = renderHook(() => useAskPanel({ base: "/api/askpanel", fetch }));
+    const panel2 = renderHook(() => useAskPanel({ base: "/api/askpanel", fetch })); // StrictMode-like double mount
+    await waitFor(() => expect(trigger.result.current.enabled).toBe(true));
+    await waitFor(() => expect(panel.result.current.status).not.toBeNull());
+    await waitFor(() => expect(panel2.result.current.status).not.toBeNull());
+    expect(fetch.calls.filter((c) => c.url.endsWith("/status"))).toHaveLength(1);
+    await act(async () => {
+      await panel.result.current.refreshStatus(); // explicit refresh bypasses the memo
+    });
+    expect(fetch.calls.filter((c) => c.url.endsWith("/status"))).toHaveLength(2);
+    clearAskPanelStatusCache();
   });
 
   it("useAskPanelStatus probes once per base and shares the result", async () => {
