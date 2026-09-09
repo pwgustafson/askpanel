@@ -34,6 +34,17 @@ describe("AskPanel", () => {
     expect(screen.getByText("Tell us about a glitch")).toBeTruthy();
   });
 
+  it("renders the footer slot on the entry screen only", async () => {
+    const fetch = mockFetch({ "/status": () => json(STATUS) });
+    render(
+      <AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} footer={<a href="/feedback">View submitted feedback</a>} />,
+    );
+    await waitFor(() => screen.getByText("Ask a question"));
+    expect(screen.getByText("View submitted feedback")).toBeTruthy();
+    fireEvent.click(screen.getByText("Ask a question"));
+    expect(screen.queryByText("View submitted feedback")).toBeNull();
+  });
+
   it("delegates bugs to onBugReport when given", async () => {
     const fetch = mockFetch({ "/status": () => json(STATUS) });
     const onBugReport = vi.fn();

@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { Prose } from "./Prose";
 import { useAskPanel, type UseAskPanelOptions } from "./useAskPanel";
 import type { Kind, Mode } from "./types";
@@ -90,6 +99,8 @@ export interface AskPanelProps extends UseAskPanelOptions {
   className?: string;
   /** Mode to open straight into, skipping the entry screen. */
   initialMode?: Mode;
+  /** Rendered at the bottom of the entry screen — e.g. a "View submitted feedback" link. */
+  footer?: ReactNode;
 }
 
 type View = "entry" | "chat" | "review" | "bug" | "sent";
@@ -103,6 +114,7 @@ export function AskPanel(props: AskPanelProps) {
     labels: labelOverrides,
     className,
     initialMode,
+    footer,
     ...hookOptions
   } = props;
   const L = useMemo(() => ({ ...defaultLabels, ...labelOverrides }), [labelOverrides]);
@@ -317,6 +329,7 @@ export function AskPanel(props: AskPanelProps) {
                 ))}
               </div>
             ) : null}
+            {footer ? <div className="askpanel-entry-footer">{footer}</div> : null}
           </div>
         ) : null}
 
