@@ -79,9 +79,17 @@ def provider_configured(provider: Any) -> bool:
 class AnthropicProvider:
     """Claude via the official ``anthropic`` SDK.
 
-    The API key comes from the constructor or ``ANTHROPIC_API_KEY``. Without one the
+    The API key comes from the constructor (``api_key=settings.ANTHROPIC_API_KEY``) or,
+    when omitted, from ``ANTHROPIC_API_KEY`` — **read once, when the provider is
+    constructed** (i.e. when you build the config), not per request. Without one the
     provider reports ``configured == False`` and the module disables itself. The SDK
     client is created lazily on first use.
+
+    ``request_options`` is merged into every ``messages.stream`` / ``messages.create``
+    call, for Messages API parameters this class does not model — e.g.
+    ``{"output_config": {"effort": "low"}}`` or ``{"thinking": {"type": "adaptive"}}``.
+    ``summary_request_options`` does the same for ``/summarize`` only (defaults to
+    ``request_options``).
     """
 
     def __init__(
@@ -93,6 +101,8 @@ class AnthropicProvider:
         summary_max_tokens: int = DEFAULT_SUMMARY_MAX_TOKENS,
         timeout: float = 60.0,
         client: Any | None = None,
+        request_options: dict[str, Any] | None = None,
+        summary_request_options: dict[str, Any] | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY") or None
         self.model = model
@@ -100,6 +110,10 @@ class AnthropicProvider:
         self.summary_max_tokens = summary_max_tokens
         self.timeout = timeout
         self._client = client
+        self.request_options: dict[str, Any] = dict(request_options or {})
+        self.summary_request_options: dict[str, Any] = dict(
+            self.request_options if summary_request_options is None else summary_request_options
+        )
 
     @property
     def configured(self) -> bool:
@@ -132,6 +146,7 @@ class AnthropicProvider:
                 max_tokens=self.max_tokens,
                 system=list(system_blocks),
                 messages=list(messages),
+                **self.request_options,
             ) as stream:
                 yield from stream.text_stream
                 final = stream.get_final_message()
@@ -148,6 +163,7 @@ class AnthropicProvider:
                 max_tokens=self.summary_max_tokens,
                 system=list(system_blocks),
                 messages=list(messages),
+                **self.summary_request_options,
             )
         except Exception as exc:  # noqa: BLE001
             raise ProviderError(str(exc)) from exc
@@ -180,12 +196,12 @@ class StubProvider:
     ``chunks`` is what ``stream`` yields (a list, or a callable of the messages returning
     a list). ``completion`` is what ``complete`` returns (a string, or a callable of the
     messages). ``fail_before_first`` raises before any chunk (→ 503); ``fail_after``
-    raises after that many chunks (→ mid-stream ``error`` frame). Every call is recorded
-    in ``calls`` as a ``ProviderCall(op, system_blocks, messages)`` named tuple —
-    ``op`` is ``"stream"`` or ``"complete"``; unpack it or use the field names.
+    raises after that many chunks (→ mid-stream ``error`` frame). ``configured=False``
+    makes the module report itself disabled (503s, ``/status.enabled == false``) — the
+    way to test the disabled path without touching the environment. Every call is
+    recorded in ``calls`` as a ``ProviderCall(op, system_blocks, messages)`` named tuple
+    — ``op`` is ``"stream"`` or ``"complete"``; unpack it or use the field names.
     """
-
-    configured = True
 
     def __init__(
         self,
@@ -199,9 +215,11 @@ class StubProvider:
         fail_before_first: bool = False,
         fail_after: int | None = None,
         usage: Usage | None = None,
+        configured: bool = True,
     ) -> None:
         self._chunks = chunks
         self._completion = completion
+        self.configured = configured
         self.fail_before_first = fail_before_first
         self.fail_after = fail_after
         self.usage = usage

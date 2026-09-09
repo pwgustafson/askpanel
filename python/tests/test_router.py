@@ -176,10 +176,7 @@ def test_disabled_503_when_no_corpus():
 
 
 def test_disabled_when_provider_unconfigured():
-    class Unconfigured(StubProvider):
-        configured = False
-
-    app, config = make_app(provider=Unconfigured())
+    app, config = make_app(provider=StubProvider(configured=False))
     assert config.enabled is False
     assert TestClient(app).get("/api/askpanel/status").json()["enabled"] is False
 
