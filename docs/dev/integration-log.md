@@ -206,3 +206,102 @@ Format:
 - **What I expected:** The doc to say what `skipStatus` means for `<AskPanel>` (probably: "hook-only; the default panel needs the probe for starters and modes"), or an `enabled` prop the host can pass from `/me`.
 - **Builder:** You read it correctly, and it was a real gap: with `skipStatus` the 0.1.1 panel hid the chat entries. 0.1.2 adds an `enabled` option to the hook (passed through by the panel): `<AskPanel skipStatus enabled={me.features.askpanel} />` shows the entries without the GET, assumes both modes, and has no starters (they only come from `/status`); once `/status` does answer it wins. The recommendation in both docs is now explicit: most hosts should leave the probe on — one cheap GET, and it's where starters and the mode list come from — and `skipStatus` is for hosts that don't use starters. `docs/configuration.md` (hook options + panel table) and the react guide → "Skipping the probe".
 - **Integrator (drovio):** confirmed from the docs (0.1.2) — Drovio keeps the probe on (it wants the starters); `enabled` + `skipStatus` not exercised.
+
+
+## AP-20 — Vendoring recipe is `requirements.txt`-shaped; a `uv.lock` host needs `uv add ./vendor/x.whl` + `COPY vendor/` before `uv sync --frozen`
+- **From:** givewise  **Date:** 2026-09-08  **Area:** docs
+- **Status:** open
+- **What I tried:** Followed fastapi guide → "Install". GiveWise has no `requirements.txt`: dependencies live in `pyproject.toml` + `uv.lock`, and the Dockerfile does `COPY pyproject.toml uv.lock* ./` then `uv sync --frozen --no-dev` *before* `COPY . .`.
+- **What happened / what was unclear:** `uv add /path/to/askpanel/python` records an absolute path outside the build context in `uv.lock`, so the image would not build. `uv add ./vendor/askpanel-0.1.2-py3-none-any.whl` works (lock says `source = { path = "vendor/…whl" }`), but the wheel must be copied into the image *before* the sync layer — a `COPY vendor/ vendor/` line between the lockfile copy and `uv sync`, which the guide's `COPY vendor/` note doesn't say. Also, because uv pins the exact wheel path, bumping 0.1.1 → 0.1.2 is `uv remove askpanel && uv add ./vendor/askpanel-0.1.2-…whl` and deleting the old file, not just dropping a new wheel in. A third gotcha: building the wheel from the package checkout while the builder had uncommitted 0.1.2 edits produced a 0.1.2 wheel from a dirty tree; I built from `git archive HEAD` into a scratch dir instead.
+- **What I expected:** A uv paragraph next to the pip one: the `uv add ./vendor/…whl` command, the Dockerfile layer order, and the remove-then-add bump step. Optionally a note that `uv build` builds whatever is on disk.
+- **Builder:**
+
+
+## AP-21 — `js/package-lock.json` is stale relative to `package.json` (0.1.0 vs 0.1.2), so `npm install` dirties the package repo
+- **From:** givewise  **Date:** 2026-09-08  **Area:** react | cli
+- **Status:** open
+- **What I tried:** README quickstart: `cd js && npm install && npm run build`, then `npm pack`.
+- **What happened / what was unclear:** `npm install` rewrote the lockfile's two `version` fields from `0.1.0` to `0.1.1` (and at HEAD `73df89b` the committed lockfile still says `0.1.0` while `package.json` says `0.1.2`). Harmless for a symlink install, but it leaves a modification in a repo I am told not to touch (I reverted it), and `npm ci` — which a CI job or a host building from a checkout would use — refuses to run when the lock disagrees with `package.json`.
+- **What I expected:** The lockfile committed in step with the version bump (`npm version` does this), or `npm ci` in the package's own CI so the drift is caught.
+- **Builder:**
+
+
+## AP-22 — Theming overrides on `:root`/`.askpanel` lose to the stylesheet's own `.askpanel { --askpanel-* }` defaults unless the host sheet loads later
+- **From:** givewise  **Date:** 2026-09-08  **Area:** react | docs
+- **Status:** open
+- **What I tried:** react guide → "Theming": "Override on `:root`, on `.askpanel`, or via a `className`". Put `.askpanel { --askpanel-accent: var(--color-brand); … }` in GiveWise's `index.css` (Tailwind v4 tokens) and imported `@askpanel/react/styles.css` from the component file, as the README's mount example does.
+- **What happened / what was unclear:** The panel rendered in the package's blue with the system font. `getComputedStyle(.askpanel)` showed `--askpanel-accent: #2b5fd9` — the shipped defaults are declared *on `.askpanel` itself* (`styles.css` line 4), so (a) a `:root` override can never win (the element's own declaration beats an inherited one), and (b) a `.askpanel` override has equal specificity and wins only if it comes later in the cascade. Vite emits `index.css` before a stylesheet imported from a component, so the defaults won. Fix in the host: `@import "@askpanel/react/styles.css"` at the top of `index.css`, with the override block after it.
+- **What I expected:** Either defaults declared at zero specificity (`:where(.askpanel) { … }`) so any host rule wins regardless of order, or the Theming section stating plainly: "the defaults live on `.askpanel`; `:root` overrides do not work; import the stylesheet before your override or use a more specific selector". The README's `import "@askpanel/react/styles.css"` inside the component is exactly the order that breaks it.
+- **Builder:**
+
+
+## AP-23 — The "surface `config.enabled` on `/me`" pattern assumes the host re-fetches identity; GiveWise never does, and the *trigger* needs the flag, not the panel
+- **From:** givewise  **Date:** 2026-09-08  **Area:** docs | react
+- **Status:** open
+- **What I tried:** fastapi guide → "Disabling and feature flags" and SPEC §8 ("feature flag surfaced on `/api/auth/me`").
+- **What happened / what was unclear:** GiveWise has no `/me`: the SPA decodes email/role from the JWT and the only identity fetch is `POST /auth/login`. So `askpanel_enabled` rides on the login response and is cached in `localStorage` — stale until the next login, which the panel's own `/status` probe papers over. The real gap is *where* the flag is needed: not inside `<AskPanel>` (it hides its entries itself) but in the host's trigger, which must decide whether the speech-bubble opens the panel or the pre-existing feedback form. With `enabled=false` the default panel would open showing only "Report a problem", which is worse than the old form. The hook's `enabled` lives inside the panel, so the trigger has no documented way to read it short of a second `createClient().status()` call.
+- **What I expected:** The guide to name the trigger case ("if your button has a fallback when the panel is disabled, it needs the flag too") and offer one of: a documented `createClient(...).status()` memo for the trigger, a small `useAskPanelStatus(base, options)` hook, or an `onStatus(status)` callback on `<AskPanel>` so the host learns `enabled` from the probe it already pays for.
+- **Builder:**
+
+
+## AP-24 — JWT: `headers={() => …}` worked first try, but the documented one-liner doesn't type-check under `strict` when the token can be null
+- **From:** givewise  **Date:** 2026-09-08  **Area:** react | docs
+- **Status:** open
+- **What I tried:** react guide → "Authentication": `headers={() => ({ Authorization: `Bearer ${getToken()}` })}`. GiveWise's `getToken()` returns `string | null`, so I wrote `token ? { Authorization: … } : {}`.
+- **What happened / what was unclear:** `tsc` (strict, `verbatimModuleSyntax`) rejected the conditional: `{ Authorization?: undefined }` is not assignable to `Record<string, string>`. Three lines with a typed `const h: Record<string,string> = {}` fixed it. Auth itself was painless — `/status` 200 with the bearer, 401 without, streaming works through Vite's `/api` proxy. The `fetch=` escape hatch was no use here: GiveWise's `request()` wrapper returns parsed JSON and redirects to `/login` on 401, not a `Response`, so the token logic is duplicated (once in `request()`, once in `headers`), and a 401 mid-chat shows the panel's generic error instead of the app's redirect.
+- **What I expected:** `headers` typed as `HeadersInit | (() => HeadersInit)` (or `Record<string, string | undefined>` with undefined dropped), and a sentence for hosts whose wrapper doesn't return a `Response`: "duplicate the header logic in `headers`; handle 401 with `onError`/`statusError`" — or an `onUnauthorized` callback.
+- **Builder:**
+
+
+## AP-25 — A per-user daily cap needs a host table; `on_turn` + `quota` is 30 lines every host will write the same way
+- **From:** givewise  **Date:** 2026-09-08  **Area:** python
+- **Status:** open
+- **What I tried:** "insert a row in `on_turn`, count rows in `quota`" per the fastapi guide → "Quota and cost", against GiveWise's existing `prompt_logs` table (per-application, no user column) so admins can audit cost in one place.
+- **What happened / what was unclear:** `on_turn` receives `(user, mode, usage)` but no text, so the row's required `system_prompt`/`user_message` columns are filled with `""` and `"help/chat"`, and the user id had to be stashed inside the JSONB `response` column and queried back with `response->>'user_id'` — workable, and `Usage.model` / cache-read counts made the cost row genuinely useful (4,003 cached input tokens per turn confirms the corpus block is cached). But the shape "N turns per <key> per day" is the same in Drovio (`metric_events`) and here; both hosts wrote a bespoke insert + count.
+- **What I expected:** A ready-made `DailyTurnCap(limit, key=lambda user: user.id, message=…)` (in-memory, per-process, documented as best-effort) that a host can drop in as `quota=` and that also serves as `on_turn=`, with the DB-backed version left to hosts that need it. Also a one-line note that `on_turn` fires with `usage=None` for a dead stream and whether the cap should count it (I count it).
+- **Builder:**
+
+
+## AP-26 — `config.enabled` says True for a provider whose model id does not exist; passing the host's key/model was easy
+- **From:** givewise  **Date:** 2026-09-08  **Area:** python | docs
+- **Status:** open
+- **What I tried:** `AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY or None, model="claude-sonnet-4-6")` — GiveWise pins that id everywhere, and passing the key from settings instead of relying on the env var was one argument. Then checked what `enabled` means.
+- **What happened / what was unclear:** `AskPanelConfig(provider=AnthropicProvider(api_key="sk-ant-fake", model="claude-does-not-exist"), corpus_text=…).enabled` is `True`. So `enabled` is "a key string is present", and a wrong default model (the docs say `claude-sonnet-5`) or a revoked key surfaces only as a 503 on the first `/chat`, while `/status` and the host's login flag keep advertising the feature. The docs describe `enabled` as "provider configured", which reads stronger than that.
+- **What I expected:** The configuration doc to define `configured` precisely ("a non-empty key; the model id and key validity are not checked until the first call"), and a recommendation to pass the host's already-validated model id rather than the package default.
+- **Builder:**
+
+
+## AP-27 — Stored summaries need the `mode` to be labelled; `SummaryOut` doesn't carry it
+- **From:** givewise  **Date:** 2026-09-08  **Area:** python | docs
+- **Status:** open
+- **What I tried:** Persisted `payload.summary.model_dump()` in a JSONB column and rendered it in the Feedback Inbox with per-field labels.
+- **What happened / what was unclear:** Since 0.1.2 the three text fields mean different things per mode (help: asked / covered / still unanswered; interview: problem / workaround / done). `SummaryOut` has no `mode`, so a stored summary cannot be labelled later; I added `"mode": payload.mode` to the JSON myself. Any host that stores the summary for triage hits this.
+- **What I expected:** `SummaryOut.mode` (additive), or the docs recommending storing `payload.mode` alongside.
+- **Builder:**
+
+
+## AP-28 — Transcript messages still carry `**bold**` after the plain-text change to `summary`/`details`
+- **From:** givewise  **Date:** 2026-09-08  **Area:** python | docs
+- **Status:** open
+- **What I tried:** Rendered `payload.transcript` (stored as `[{role, content}]`) as plain text in the admin inbox, collapsed, per SPEC §8.
+- **What happened / what was unclear:** AP-18's fix made `details` and `summary.summary` plain text, but assistant turns in the transcript are the model's raw output — `**Applications**`, `- ` bullets — so a host that renders the transcript as text shows literal asterisks (visible in the GiveWise inbox). Expected given `Prose` exists on the React side, but the configuration doc's payload table says nothing about it, and `transcript_text()` passes the markup through.
+- **What I expected:** A note in the payload table that transcript content is the panel's markdown-ish text, and a `strip_markup=True` option on `transcript_text()` (or a `plain_text(content)` helper mirroring `Prose`).
+- **Builder:**
+
+
+## AP-29 — Docs sent me to the source twice: the `labels` key list and the `headers` type
+- **From:** givewise  **Date:** 2026-09-08  **Area:** docs
+- **Status:** open
+- **What I tried:** Wanted to rename the three entry buttons and the header. react guide → "Strings": "Import `defaultLabels` to see the full list."
+- **What happened / what was unclear:** That is a pointer to the source; I read `dist/AskPanel.d.ts` for the 37 keys (`entryHelp`, `entryFeature`, `entryBug`, `title`, …) and `dist/useAskPanel.d.ts` for the exact `headers` type (AP-24). Both are small, but the configuration doc has a table for every Python option and none for the labels.
+- **What I expected:** A `labels` table in `docs/configuration.md` (key → default string → where it appears), like the `--askpanel-*` variable table.
+- **Builder:**
+
+
+## AP-30 — Host line count: 354 lines against the SPEC's "~100 plus a corpus"; where they went
+- **From:** givewise  **Date:** 2026-09-08  **Area:** docs | react
+- **Status:** open
+- **What I tried:** Counted `git diff main --numstat` on everything that isn't the corpus, vendored artifacts, lockfiles, tests, the triage skill, or the spec file.
+- **What happened / what was unclear:** Backend 177: `app/askpanel.py` 127 (config + sink + quota + `on_turn`, with docstrings), migration 35, model/serializer/router/login 15. Frontend 175: `FeedbackInbox.tsx` 79 (summary block with per-mode labels + collapsed transcript, which SPEC §8 asks both hosts to build), `FeedbackButton.tsx` 49, `client.ts` types 25, `index.css` token map 20, `Login.tsx` 2. The mount itself is on target; the overrun is (a) the two triage-view components every host writes the same way, (b) the quota/cost rows (AP-25), and (c) the migration, which no package can avoid.
+- **What I expected:** Either restate the target as "the mount in ~100 lines" or ship read-only `<Transcript>` / `<EscalationSummary>` components (and the `DailyTurnCap` of AP-25) so a second host's triage view is an import. Nothing here required reading Drovio's integration — by the time I started, AP-1..19 had already turned every Drovio-specific gap I would have hit (async sink, `as_text()`, `quota` messages, `headers`, `labels.title`) into documented behaviour; the fastapi guide's "Async host" example matched GiveWise line for line.
+- **Builder:**
