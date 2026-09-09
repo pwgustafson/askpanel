@@ -380,3 +380,210 @@ Format:
 - **What I expected:** Either an `async def averify()` twin, or the doc example showing the lifespan form (`await asyncio.to_thread(config.verify)`) with a note that a failure must not block startup.
 - **Builder:** `await config.averify()` added — `verify()` in a worker thread — and the guide's example is now the lifespan form you wrote, try/except included, with the note that a failure must never block boot (`askpanel_not_ready problems=[…]` and carry on). `verify()` is documented as "synchronous, does network" for sync startup code.
 - **Integrator (givewise):** confirmed (0.1.4) — `await config.averify()` inside try/except in the lifespan, exactly the guide's form; startup logs `askpanel_ready corpus_chars=14804`. (While the container still had 0.1.3 the same code logged `askpanel_not_ready problems=["verify raised AttributeError(...averify)"]` and the app booted anyway — the never-block-boot shape works as intended.)
+
+---
+
+> **AP-37..AP-61** are transcribed by the builder from the third host's adoption report —
+> VBS Crew Builder `feature/askpanel` @ `401e3ff` (`docs/askpanel-adoption-findings.md`); adopted blind from the public repo against 0.1.4. The developer had only the README and what it links to; source and this log were
+> off limits. One entry per finding, in the report's order; "What I tried / happened /
+> expected" condense the report's own words.
+
+## AP-37 — Installing from a git URL is not covered by the README
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** fixed (v0.1.5)
+- **What I tried:** README "Install" and both linked `#install` sections only cover a sibling checkout or a vendored wheel/`npm pack`.
+- **What happened / what was unclear:** With only the GitHub URL (no checkout in CI, no PyPI) the developer worked it out: Python `askpanel @ https://github.com/pwgustafson/askpanel/archive/<sha>.tar.gz#subdirectory=python` (a `git+https://` URL would fail in `python:3.12-slim`, which has no git); React needs clone → `npm pack` in `js/` → vendored tarball, since npm can't install a subdirectory of a repo.
+- **What I expected:** A README "from GitHub without a checkout" recipe for both halves.
+- **Builder:** README → "1. Install both packages" now opens with exactly that: the archive-URL form (pin `<sha>` or `main`, `uv add` variant) — verified by me in `python:3.12-slim` with no git — and the clone/`npm pack`/`vendor/` tarball recipe for React, with the Docker layer note. The checkout path moved to second place as "hacking on the package itself".
+
+## AP-38 — Vendored npm tarball has a Docker layer-ordering trap only the Python doc warned about
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** fixed (v0.1.5)
+- **What I tried:** Followed react.md "Commit `vendor/` … so `COPY web/ web/ && npm ci` works" with the common cache-friendly Node Dockerfile (copy manifests → install → copy the rest).
+- **What happened / what was unclear:** `npm install` failed: the lockfile references `file:vendor/…tgz` which isn't in the image yet.
+- **What I expected:** The same warning fastapi.md gives for the wheel.
+- **Builder:** react.md → "Install" → the tarball step now shows the Dockerfile with `COPY vendor/ ./vendor/` before `RUN npm ci`, and the README install note says it too.
+
+## AP-39 — `askpanel prompt` prints the estimate on stderr
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs | cli
+- **Status:** answered
+- **What I tried:** README: "the assembled prompt + token estimate"; piped to `less`.
+- **What happened / what was unclear:** The prompt goes to stdout, the estimate to stderr, so `| less` hides the number and `2>&1 >/dev/null` shows the prompt.
+- **What I expected:** A sentence saying which stream is which.
+- **Builder:** Deliberate (so the prompt can be piped or diffed cleanly) but undocumented. README step 2 now shows both: `… | less` for the prompt and `… >/dev/null` for just the estimate.
+
+## AP-40 — README doesn't say `user_dependency` is required, or what to do without a user object
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs | python
+- **Status:** fixed (v0.1.5)
+- **What I tried:** The quickstart passes `current_user` and uses `user.id` in the sink; identity in this app is `request.state.cf_email`, `None` locally.
+- **What happened / what was unclear:** Had to open configuration.md to learn it is required; nothing said the dependable may return `None` or a string. Tried `def current_user(request) -> str | None`; `None` reached `on_escalate` unchanged and a string was stamped on the row. Noted `DailyTurnCap`'s default key would be `str(None)` for everyone.
+- **What I expected:** README step 3: required, may return anything including `None`; alternatives for hosts without a user object.
+- **Builder:** README step 3 now has a "four things the example glosses over" list, first item exactly this (return the identity you have or `None`, or take `request` as the sink's third parameter). configuration.md's `user_dependency` row and fastapi.md → "Authentication" say the same and warn about `DailyTurnCap`'s default key with `None` users. A package test now pins the `None` case.
+
+## AP-41 — Starters are server-side only; a SPA that owns them has to move them
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** This app kept `starters.json` in the frontend, keyed by the `?` icons. README step 4 doesn't mention starters; there is no `starters` prop on `<AskPanel>`.
+- **What happened / what was unclear:** Moved the file next to the corpus, loaded it into `AskPanelConfig(starters=…)`, and imported the same JSON from the frontend for the route→screen map so the two can't drift.
+- **What I expected:** README to say starters are server-side, keyed by what `getContext` returns, `"*"` fallback.
+- **Builder:** By design (the server owns everything the assistant says, starters included) and now stated in README step 3's list. configuration.md → "Context" gained "Screen keys vs. route paths" with your exact recipe — registry file next to the corpus, loaded server-side, same file imported client-side for the map — as the recommended shape for a SPA with a registry. No client-side `starters` prop: it would let the panel advertise questions the server can't answer.
+
+## AP-42 — Exact-match contexts vs route paths
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** configuration.md shows both `allowed_contexts=[…]` and `context_validator=lambda c: c.startswith("/")`; the README's own `getContext={() => location.pathname}` example returns a route.
+- **What happened / what was unclear:** Nothing said starters lookup is an exact key match, so a route-returning host gets `"*"` for every screen unless every path is a key. Used screen keys with a rightmost-match route map.
+- **What I expected:** State the exact-match rule and the two shapes.
+- **Builder:** configuration.md → "Context" → "Screen keys vs. route paths" now spells out both shapes (screen keys + client map; or route paths + `context_validator` and exact-path keys / `"*"`), and the `starters` row says lookup is exact. react.md → "Context" points there.
+
+## AP-43 — `AnthropicProvider` reads `ANTHROPIC_API_KEY` at construction — not stated
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** Built the config once at import as advised; a test deleted the env var after import.
+- **What happened / what was unclear:** The key is read when `AnthropicProvider()` is constructed, so it must be in the environment before `app.main` is imported; `delenv` before building the config gives `enabled is False`.
+- **What I expected:** "The key is read when the provider is constructed, not per request."
+- **Builder:** Now in the class docstring, configuration.md → "Provider", fastapi.md → "The provider" (with the test implication), and README step 3, together with the settings alternative: `AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY or None, model=…)`. A package test pins construction-time reading.
+
+## AP-44 — Linter: whole-word rule, and Python callers must re-add the defaults; `LintIssue` fields undocumented
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** `lint_corpus(HELP_DIR, banned=[…])` with the app's extra words; wanted to fail only on errors.
+- **What happened / what was unclear:** `banned=` replaces the defaults in Python too (only `--ban` said so); `crew` doesn't catch `crews`/`crew's`; couldn't filter by severity without knowing the field names, so asserted `issues == []`.
+- **What I expected:** State that `banned=` replaces, show the spread, list `LintIssue` fields, note plurals.
+- **Builder:** corpus-guide.md now has the exact snippet: `lint_corpus(dir, banned=[*DEFAULT_BANNED_WORDS, "crew", "crews", "crew's"])` with `has_errors(issues)` (exported; warnings such as the size hint don't fail), the `LintIssue` fields (`file`, `line`, `message`, `severity`), and the plurals/possessives note.
+
+## AP-45 — No way to set effort / thinking on the provider
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** python | docs
+- **Status:** fixed (v0.1.5)
+- **What I tried:** The old agent used `output_config={"effort": "low"}` with `claude-opus-5`; `AnthropicProvider` takes only `model`, `max_tokens`, `summary_max_tokens`, `timeout`.
+- **What happened / what was unclear:** Dropped the setting rather than reimplement streaming + caching in a custom provider.
+- **What I expected:** An `extra_request_options=` passthrough or a sentence saying it isn't exposed.
+- **Builder:** `AnthropicProvider(request_options={…})` merges any Messages API parameter into every `messages.stream`/`create` call (`{"output_config": {"effort": "low"}}`, `{"thinking": {"type": "adaptive"}}`, `stop_sequences`, …); `summary_request_options=` overrides it for `/summarize` alone and defaults to the same. Documented in configuration.md and fastapi.md → "The provider"; a test asserts the kwargs reach the SDK.
+
+## AP-46 — Escalation into a single-text-column table loses the structured summary
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** Followed the `as_text()` recipe because a JSON column couldn't be added now.
+- **What happened / what was unclear:** The `summary` (`already_supported`, `mode`) and transcript are simply gone; nothing set that expectation.
+- **What I expected:** A sentence stating the trade-off.
+- **Builder:** fastapi.md → "Title vs. details" recipe 2 now ends with exactly that trade-off: you keep the title and the edited summary text; `already_supported`, `mode`, and the transcript are lost unless you also store `payload.model_dump()` — add the JSON column when you can.
+
+## AP-47 — `/escalate` `kind` is a fixed vocabulary
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** Host `kind` happened to be `question|feature|bug` too.
+- **What happened / what was unclear:** Nothing in the README says the three values are fixed; a host with other kinds must map them in the sink.
+- **What I expected:** Say so in the README.
+- **Builder:** README step 3 list and fastapi.md → "Escalation" now state `payload.kind` is exactly `question | feature | bug` (the panel's three entries) and that the sink maps it.
+
+## AP-48 — Entry-screen starters read `getContext()` once, at mount — not at open
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** react
+- **Status:** fixed (v0.1.5)
+- **What I tried:** Opened the panel from the History screen's `?`; got the generic `*` starters. After a chat there, opened from the Dashboard: got *History's* starters. Read `useAskPanel.ts`: `starters` recomputed only when `/status` landed or a conversation set `context`. No prop, action, or documented pattern to refresh it.
+- **What happened / what was unclear:** Worked around it with ~15 lines: seed a context ref at mount and remount the panel (`key`) whenever help opens for a different screen. The single most expensive thing in the adoption (~12 min plus the only source read).
+- **What I expected:** Recompute starters from `getContext()` whenever the panel opens.
+- **Builder:** Fixed as you specified. `<AskPanel>` calls the new `refreshContext()` action every time `open` turns true, and `starters` derive from that live value (falling back to a read at `/status` time), so the entry screen always shows the starters for the screen the panel is opened on; `open(mode)` still captures the conversation's context. A test opens on "Albums", chats, starts over, closes, reopens on "People" and asserts the People starters (and that the chat carried `context: "Albums"`). Your `key`-remount workaround and the two-step open can be deleted. Sorry — this was a documentation failure on top of a bug: the docs described `open()` semantics and said nothing about the entry screen.
+
+## AP-49 — `getContext` is called at mount, not just at `open()`
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** configuration.md said "captured once, when `open()` is called"; it was also called when `/status` resolved.
+- **What happened / what was unclear:** A ref-based `getContext` had to be valid at mount.
+- **What I expected:** Document the real call sites.
+- **Builder:** Now documented precisely (configuration.md `getContext` row, react.md → "Context"): read at every panel open and every `open(mode)`, plus once when `/status` resolves; a ref-based implementation should be valid at mount. With AP-48 fixed the mount-time read no longer matters for correctness.
+
+## AP-50 — A remounted panel that starts life with `open={true}` did not render in some runs (unconfirmed)
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** react
+- **Status:** answered
+- **What I tried:** Couldn't separate it from a browser-automation artifact (the extension's first pointer click after load never reached React; a programmatic `.click()` always did). Kept a two-step open.
+- **What happened / what was unclear:** Recorded as unconfirmed.
+- **What I expected:** A package test that mounts `<AskPanel open />` and asserts the aside renders.
+- **Builder:** Added that test: a panel mounted already `open` renders the dialog synchronously and the entry buttons once `/status` resolves — passes. With AP-48 fixed there is no reason to remount at all, so the two-step open can go; if you see it again without the remount, file it with a repro and I'll dig.
+
+## AP-51 — After Sent → Done, reopening lands in an empty chat view
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** react
+- **Status:** fixed (v0.1.5)
+- **What I tried:** Sent a question, pressed Done, reopened on the same screen.
+- **What happened / what was unclear:** Done closed without `reset()`; the next open showed the chat view with no messages and no starters. "Start over" did reset.
+- **What I expected:** Make Done reset.
+- **Builder:** Done now resets (same as Start over) and then closes, so the next open lands on the entry screen with a cleared transcript — a test covers the whole Sent → Done → reopen path. Closing with × / Escape mid-conversation still keeps the transcript, on purpose; react.md → "Flow" now states both.
+
+## AP-52 — Theming: no variable for the user bubble's text colour
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** react | docs
+- **Status:** fixed (v0.1.5)
+- **What I tried:** Wanted the old solid blue-600 bubble with white text.
+- **What happened / what was unclear:** Only `--askpanel-user-bg` existed, so the only safe choice was a light bubble with the default `--askpanel-fg`.
+- **What I expected:** Add `--askpanel-user-fg`.
+- **Builder:** `--askpanel-user-fg` added (default `var(--askpanel-fg)`), applied to user bubbles and their caption; listed in the variable table with the solid-accent recipe (`--askpanel-user-bg: #2563eb; --askpanel-user-fg: #fff`). Nice to hear the rest of the palette mapped cleanly.
+
+## AP-53 — `resolve.dedupe` advice reads as universal; it's for symlink installs only
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** README note said to add `resolve.dedupe` "so the symlink doesn't pull a second React".
+- **What happened / what was unclear:** With the tarball there's no second React and nothing is needed; easy to cargo-cult.
+- **What I expected:** "(not needed for a tarball/`file:` install)".
+- **Builder:** README and react.md now say it explicitly: dedupe is for symlink installs only; a tarball needs nothing.
+
+## AP-54 — Header label: `labels.title` replaces the whole header — confirmed
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** Set `labels.title = "Help"`.
+- **What happened / what was unclear:** Did exactly what the docs said (twice).
+- **What I expected:** Nothing.
+- **Builder:** No change. Recorded as confirmation that AP-15's fix and docs hold for a blind adopter.
+
+## AP-55 — Identity without a user object works but is undocumented in the README
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** `on_escalate(payload, user)` received `None` locally and an email under a stamping middleware; both wrote the row.
+- **What happened / what was unclear:** The `request` third-parameter alternative was in fastapi.md but not the README.
+- **What I expected:** Mention both in the README.
+- **Builder:** Folded into AP-40: README step 3 now names both routes (return the identity you have or `None`; or `on_escalate(payload, user, request)`).
+
+## AP-56 — Escalation `context` is a screen key, not a route — worth a sentence
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** Triage rows read `context=history` rather than `/sessions/1/history` after adopting screen keys.
+- **What happened / what was unclear:** A consequence of AP-42.
+- **What I expected:** "`payload.context` is whatever `getContext` returned — pick something your triage view can read."
+- **Builder:** Added verbatim to fastapi.md → "Escalation" next to the `kind` sentence.
+
+## AP-57 — `StubProvider` covers the enabled path; the disabled path needed an undocumented trick
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** python | docs
+- **Status:** fixed (v0.1.5)
+- **What I tried:** fastapi.md's testing section shows `StubProvider(...)`, `fail_before_first`, `fail_after`, `provider.calls` — all worked first time (36/36). To test *disabled* had to guess `monkeypatch.delenv("ANTHROPIC_API_KEY")` before building the config.
+- **What happened / what was unclear:** `StubProvider` had no documented `configured=False`.
+- **What I expected:** `StubProvider(configured=False)` or a documented env trick.
+- **Builder:** `StubProvider(configured=False)` exists now (the module reports `enabled: false`, 503s, `/escalate` still works) and is documented in fastapi.md → "Testing" and configuration.md → "Provider". The env trick still works and its timing (before building the config) is now explained under "The provider".
+
+## AP-58 — Error body shape goes through the host's handlers; no machine-readable codes
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** Old tests asserted codes like `help_agent_disabled`.
+- **What happened / what was unclear:** The package raises `HTTPException`, so the 503 arrived in the host handler's shape (`{"detail": …, "code": "http_error"}`); the package has no codes.
+- **What I expected:** "Errors are plain `HTTPException`s (`detail` only); wrap the router if you need error codes."
+- **Builder:** Added to fastapi.md → "Testing" and README step 3 (with the three statuses). Codes are wontfix for v0.1: the protocol defines status + `detail`, and the panel keys on status. If a second host asks, a `code` field is an additive protocol change.
+
+## AP-59 — The four endpoint paths should be spelled out for host tests
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** "Auth denies anonymous on all four endpoints" — `app.routes` doesn't list an included router's paths on current FastAPI (lazy `_IncludedRouter`).
+- **What happened / what was unclear:** Had to know the paths.
+- **What I expected:** List them.
+- **Builder:** README step 3 and fastapi.md → "Testing" now list `GET {base}/status`, `POST {base}/chat`, `POST {base}/summarize`, `POST {base}/escalate`, with the `app.routes` caveat.
+
+## AP-60 — The refusal boundary is in the package prompt and holds — the README never mentions it
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** Asked "Why is Ella in group 3?" with only `extra_instructions` for the app-specific boundary.
+- **What happened / what was unclear:** Declined correctly with where to look. corpus-guide.md's description is accurate; the README doesn't mention the boundary at all, and it is the reason a host can delete its own system prompt.
+- **What I expected:** Say it in the README.
+- **Builder:** README step 3 now ends with one paragraph on the built-in boundary and that `extra_instructions` is for product-specific tone/rules only.
+
+## AP-61 — Two model calls per escalation — not stated in the README
+- **From:** vbs (transcribed by builder)  **Date:** 2026-09-09  **Area:** docs
+- **Status:** answered
+- **What I tried:** "Send this to the team" costs a `/summarize` call before the review step (a few seconds behind "Summarizing…").
+- **What happened / what was unclear:** Fine, but the README doesn't count it (configuration/fastapi do, under quota).
+- **What I expected:** State it where the flow is described.
+- **Builder:** README step 4's closing paragraph and react.md → "Flow" now say the link costs one `/summarize` call before the editable review step; `DailyTurnCap` and `quota` already counted it.
