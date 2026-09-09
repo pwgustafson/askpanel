@@ -89,12 +89,19 @@ you're at it". Keep each question to one or two sentences.
 - Start from wherever the person already is. If their first message already answers \
 the first question, acknowledge it in a few words and ask the next unanswered one. \
 Skip any agenda item they have clearly covered.
-- If the documentation already covers what they are asking for, say so before \
+- If the documentation already covers what they are asking for, say so once, before \
 continuing: tell them briefly how {product_name} does it today, in the documentation's \
-words, and ask whether that solves it. If it does, you are done; suggest they try it. \
-If it does not, carry on with the interview about the gap.
+words, and ask whether that solves it. If they say it does, you are done: suggest they \
+try it and say they can still send this to the team if they like. If they say it does \
+not, or they answer by describing the problem further instead of saying yes, treat that \
+as "no" and carry on with the interview about the gap. Never ask "does that solve it?" \
+a second time.
+- Never ask the same question twice. Each turn moves to the next unanswered agenda item.
 - Do not promise anything. Do not say the team will build it, or when. Do not suggest \
 your own designs.
+- Before you offer the summary, make sure you have asked what done would look like for \
+them (the last agenda item), unless they already said. If it is still missing, that is \
+your next question.
 - By turn {max_turns} of yours at the latest — earlier if the agenda is covered — stop \
 asking. Say that you have what you need and that they can review a summary and send it \
 to the team using "Send this to the team" in this panel.
@@ -106,26 +113,68 @@ and then offer to return to the request.
 {style}
 {extra_instructions}"""
 
-SUMMARIZE_INSTRUCTIONS = """Mode: summarize.
+SUMMARIZE_INSTRUCTIONS = """Mode: summarize a feature request.
 
 You will be given a conversation between a person using {product_name} and the help \
-assistant. Turn it into a structured request for the {product_name} team. Use only what \
-the person actually said; do not invent details, and do not add your own suggestions.
+assistant, in which the person described something they want. Turn it into a \
+structured request for the {product_name} team. Use only what the person actually \
+said; do not invent details, and do not add your own suggestions.
 
 Respond with a single JSON object and nothing else — no prose before or after, no \
 code fences. Fields:
 - "title": one line, at most 120 characters, written the way a ticket title is written \
 (what they want, not "feature request:").
 - "problem": what the person is trying to do and what gets in the way, in one or two \
-short paragraphs, in the person's words where possible.
-- "workaround": what they do today instead. Use an empty string if none was mentioned.
-- "outcome": what done looks like for them. Use an empty string if they did not say.
-- "summary": the three fields above as short markdown paragraphs (plain text with \
-**bold** labels and "- " bullets, no headings or tables), ready for the person to edit \
-and submit.
+short sentences, in the person's words where possible.
+- "workaround": what they do today instead. Empty string if none was mentioned.
+- "outcome": what done looks like for them. Empty string if they did not say.
+- "already_supported": true only if the assistant showed, from the documentation, that \
+{product_name} already does what the person asked and the person did not say it falls \
+short; otherwise false.
 
-If the conversation is a question the documentation could not answer, "problem" is the \
-question and what they were trying to do; "outcome" is what an answer would let them do."""
+Rules for every text field: plain sentences, no markdown, no emphasis markers, no \
+labels inside the value. When something was not said, use an empty string — never \
+"not specified", "none", "unknown", or similar placeholder text."""
+
+SUMMARIZE_HELP_INSTRUCTIONS = """Mode: summarize a question.
+
+You will be given a conversation between a person using {product_name} and the help \
+assistant, in which the person asked how to do something. Turn it into a short, \
+structured note for the {product_name} team so a person can follow up. Use only what \
+was actually said; do not invent details.
+
+Respond with a single JSON object and nothing else — no prose before or after, no \
+code fences. Fields:
+- "title": one line, at most 120 characters: the question, phrased as a ticket title.
+- "problem": what the person asked and what they were trying to do, in one or two \
+short sentences, in their words where possible.
+- "workaround": what the assistant was able to answer from the documentation, in one \
+or two short sentences. Empty string if it could not answer at all.
+- "outcome": what is still unanswered or unclear — what the person needs that the \
+documentation did not cover. Empty string if the question was fully answered and the \
+person is sending it anyway.
+- "already_supported": true if the documentation fully answered the question; \
+otherwise false.
+
+Rules for every text field: plain sentences, no markdown, no emphasis markers, no \
+labels inside the value. When something was not said, use an empty string — never \
+"not specified", "none", "unknown", or similar placeholder text."""
+
+#: Labels used when the server renders ``SummaryOut.summary`` as plain text, per mode.
+SUMMARY_LABELS: dict[str, dict[str, str]] = {
+    "interview": {
+        "problem": "Problem",
+        "workaround": "Current workaround",
+        "outcome": "What done looks like",
+        "already_supported": "Already possible today; the assistant showed how.",
+    },
+    "help": {
+        "problem": "What they asked",
+        "workaround": "What the guide covered",
+        "outcome": "Still unanswered",
+        "already_supported": "The guide answered this fully.",
+    },
+}
 
 
 def render_agenda(agenda: Sequence[str]) -> str:
@@ -164,9 +213,12 @@ def interview_instructions(
     ).strip()
 
 
-def summarize_instructions(product_name: str) -> str:
-    """The summarize instruction block (JSON output)."""
-    return SUMMARIZE_INSTRUCTIONS.format(product_name=product_name).strip()
+def summarize_instructions(product_name: str, mode: str = "interview") -> str:
+    """The summarize instruction block (JSON output), shaped for ``mode``:
+    ``"interview"`` → problem / workaround / outcome; ``"help"`` → what they asked /
+    what the guide covered / still unanswered."""
+    template = SUMMARIZE_HELP_INSTRUCTIONS if mode == "help" else SUMMARIZE_INSTRUCTIONS
+    return template.format(product_name=product_name).strip()
 
 
 __all__ = [
@@ -178,6 +230,8 @@ __all__ = [
     "HELP_INSTRUCTIONS",
     "INTERVIEW_INSTRUCTIONS",
     "SUMMARIZE_INSTRUCTIONS",
+    "SUMMARIZE_HELP_INSTRUCTIONS",
+    "SUMMARY_LABELS",
     "help_instructions",
     "interview_instructions",
     "summarize_instructions",

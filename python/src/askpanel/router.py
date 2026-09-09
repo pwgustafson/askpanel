@@ -30,6 +30,7 @@ from .protocol import (
     SummaryOut,
     apply_context,
     encode_frame,
+    render_summary_text,
 )
 from .provider import Usage
 
@@ -113,9 +114,11 @@ async def call_host(fn: Any, *args: Any, **kwargs: Any) -> Any:
 _JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 
 
-def parse_summary(text: str) -> SummaryOut:
+def parse_summary(text: str, mode: str = "interview") -> SummaryOut:
     """Turn the model's summarize output into ``SummaryOut``, tolerating fences and
-    stray prose. Falls back to using the raw text as the summary."""
+    stray prose. ``summary`` is always rendered server-side as plain text shaped for
+    ``mode`` (the model's own ``summary`` field is ignored). Falls back to using the
+    raw text as the summary."""
     cleaned = _JSON_FENCE.sub("", text or "").strip()
     candidates = [cleaned]
     start, end = cleaned.find("{"), cleaned.rfind("}")
@@ -127,14 +130,24 @@ def parse_summary(text: str) -> SummaryOut:
         except ValueError:
             continue
         if isinstance(data, dict):
-            data = {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in data.items()}
-            data["title"] = (data.get("title") or "Untitled request")[:120]
+            data = {k: (v if isinstance(v, str | bool) else json.dumps(v)) for k, v in data.items()}
+            data["title"] = str(data.get("title") or "Untitled request")[:120]
+            data["already_supported"] = _truthy(data.get("already_supported", False))
+            data.pop("summary", None)
             try:
-                return SummaryOut.model_validate(data)
+                out = SummaryOut.model_validate(data)
             except ValidationError:
                 continue
+            out.summary = render_summary_text(out, mode)
+            return out
     first_line = next((ln.strip() for ln in cleaned.splitlines() if ln.strip()), "Untitled request")
     return SummaryOut(title=first_line[:120], problem=cleaned, summary=cleaned)
+
+
+def _truthy(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in {"true", "yes", "1"}
 
 
 def create_router(config: AskPanelConfig) -> APIRouter:
@@ -256,7 +269,7 @@ def create_router(config: AskPanelConfig) -> APIRouter:
         messages = apply_context(body.messages, body.context)
         if messages[-1]["role"] == "assistant":
             messages.append({"role": "user", "content": "Please summarize this conversation now."})
-        blocks = config.system_blocks("summarize")
+        blocks = config.system_blocks("summarize", body.mode)
         provider = config.provider
         try:
             if hasattr(provider, "complete_with_usage"):
@@ -272,7 +285,7 @@ def create_router(config: AskPanelConfig) -> APIRouter:
         if not isinstance(usage, Usage):
             usage = None
         await _on_turn(user, body.mode, usage)
-        return JSONResponse(parse_summary(text).model_dump(), headers=_PROTOCOL_HEADERS)
+        return JSONResponse(parse_summary(text, body.mode).model_dump(), headers=_PROTOCOL_HEADERS)
 
     @router.post("/escalate", response_model=EscalationResult)
     async def escalate(request: Request, user: Any = user_dep) -> JSONResponse:

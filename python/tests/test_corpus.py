@@ -111,6 +111,11 @@ def test_prompt_boundaries_present():
     assert "turn 4" in i
     assert "documentation already covers" in i
     s = prompts.summarize_instructions("Orchard")
-    for f in ('"title"', '"problem"', '"workaround"', '"outcome"', '"summary"'):
+    for f in ('"title"', '"problem"', '"workaround"', '"outcome"', '"already_supported"'):
         assert f in s
+    assert "feature request" in s
+    h = prompts.summarize_instructions("Orchard", "help")
+    assert "summarize a question" in h and "what the assistant was able to answer" in h.lower()
+    assert "Never ask the same question twice" in i
+    assert "what done would look like" in i
     assert "{" not in h.replace("{", "", 0) or "{product_name}" not in h

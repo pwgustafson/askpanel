@@ -128,15 +128,33 @@ def test_escalate_rules():
     assert r.summary is not None and r.summary.title == "S"
 
 
-def test_summary_out_fills_summary_markdown():
+def test_summary_out_fills_plain_text_summary():
     s = SummaryOut(
         title="Bulk delete", problem="Too many clicks", workaround="", outcome="One click"
     )
-    assert "**Bulk delete**" in s.summary
-    assert "Too many clicks" in s.summary
-    assert "workaround" not in s.summary.lower()
+    assert s.summary == "Problem: Too many clicks\n\nWhat done looks like: One click"
+    assert "**" not in s.summary
+    assert s.already_supported is False
     with pytest.raises(ValidationError):
         SummaryOut(title="x" * 121)
+
+
+def test_summary_placeholders_become_empty():
+    from askpanel.protocol import is_placeholder, render_summary_text
+
+    s = SummaryOut(title="T", problem="p", workaround="None mentioned", outcome="Not specified.")
+    assert s.workaround == "" and s.outcome == ""
+    assert s.summary == "Problem: p"
+    for t in ("N/A", "none", "  unknown ", "-", "No workaround"):
+        assert is_placeholder(t), t
+    assert not is_placeholder("None of the buttons work")
+    s = SummaryOut(
+        title="T", problem="asked", workaround="answered", outcome="", already_supported=True
+    )
+    assert render_summary_text(s, "help") == (
+        "What they asked: asked\n\nWhat the guide covered: answered\n\n"
+        "The guide answered this fully."
+    )
 
 
 def test_escalation_result_coerce():

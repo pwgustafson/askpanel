@@ -9,6 +9,7 @@ tightened or loosened per host by passing a validation context::
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
@@ -141,23 +142,54 @@ class SummaryOut(BaseModel):
     workaround: str = ""
     outcome: str = ""
     summary: str = ""
+    #: True when the product already does what was asked and the assistant showed how
+    #: (interview), or the documentation fully answered the question (help).
+    already_supported: bool = False
+
+    @field_validator("problem", "workaround", "outcome", mode="before")
+    @classmethod
+    def _drop_placeholders(cls, v: Any) -> Any:
+        return "" if isinstance(v, str) and is_placeholder(v) else v
 
     @model_validator(mode="after")
     def _fill_summary(self) -> SummaryOut:
         if not self.summary:
-            self.summary = render_summary_markdown(self)
+            self.summary = render_summary_text(self, "interview")
         return self
 
 
-def render_summary_markdown(s: SummaryOut) -> str:
-    parts = [f"**{s.title}**" if s.title else ""]
-    if s.problem:
-        parts.append(f"**Problem**\n{s.problem}")
-    if s.workaround:
-        parts.append(f"**Current workaround**\n{s.workaround}")
-    if s.outcome:
-        parts.append(f"**What done looks like**\n{s.outcome}")
-    return "\n\n".join(p for p in parts if p).strip()
+_PLACEHOLDER = re.compile(
+    r"^\W*(not specified|not mentioned|not stated|none( mentioned| stated| given)?|n/?a|"
+    r"unknown|unclear|nothing|no workaround|no outcome|-)\W*$",
+    re.IGNORECASE,
+)
+
+
+def is_placeholder(text: str) -> bool:
+    """Is ``text`` one of the "nothing here" phrases a model writes instead of ""?"""
+    return bool(_PLACEHOLDER.match(text.strip()))
+
+
+def render_summary_text(s: SummaryOut, mode: str) -> str:
+    """Plain-text rendering of a summary, with labels shaped for ``mode`` (``"help"`` or
+    ``"interview"``). No markdown emphasis — hosts store and show this as plain text.
+    Empty sections are omitted."""
+    from .prompts import SUMMARY_LABELS  # local import: prompts imports nothing from here
+
+    labels = SUMMARY_LABELS.get(mode, SUMMARY_LABELS["interview"])
+    parts: list[str] = []
+    for field in ("problem", "workaround", "outcome"):
+        value = getattr(s, field, "").strip()
+        if value:
+            parts.append(f"{labels[field]}: {value}")
+    if s.already_supported:
+        parts.append(labels["already_supported"])
+    return "\n\n".join(parts).strip()
+
+
+def render_summary_markdown(s: SummaryOut) -> str:  # pragma: no cover — kept for 0.1.x callers
+    """Deprecated alias: 0.1.0/0.1.1 rendered summaries with ``**bold**`` labels."""
+    return render_summary_text(s, "interview")
 
 
 class EscalateRequest(_ContextMixin):
@@ -328,5 +360,7 @@ __all__ = [
     "encode_frame",
     "apply_context",
     "check_messages",
+    "render_summary_text",
     "render_summary_markdown",
+    "is_placeholder",
 ]

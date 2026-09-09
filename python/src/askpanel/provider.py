@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_MAX_TOKENS = 1024
@@ -31,6 +31,14 @@ class Usage:
     output_tokens: int | None = None
     cache_read_input_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
+
+
+class ProviderCall(NamedTuple):
+    """One recorded ``StubProvider`` call. Unpacks as ``op, system_blocks, messages``."""
+
+    op: str  # "stream" | "complete"
+    system_blocks: list[dict]
+    messages: list[dict]
 
 
 class ProviderError(RuntimeError):
@@ -151,7 +159,8 @@ class StubProvider:
     a list). ``completion`` is what ``complete`` returns (a string, or a callable of the
     messages). ``fail_before_first`` raises before any chunk (→ 503); ``fail_after``
     raises after that many chunks (→ mid-stream ``error`` frame). Every call is recorded
-    in ``calls`` as ``(kind, system_blocks, messages)``.
+    in ``calls`` as a ``ProviderCall(op, system_blocks, messages)`` named tuple —
+    ``op`` is ``"stream"`` or ``"complete"``; unpack it or use the field names.
     """
 
     configured = True
@@ -174,10 +183,10 @@ class StubProvider:
         self.fail_before_first = fail_before_first
         self.fail_after = fail_after
         self.usage = usage
-        self.calls: list[tuple[str, list[dict], list[dict]]] = []
+        self.calls: list[ProviderCall] = []
 
     def stream(self, system_blocks: Sequence[dict], messages: Sequence[dict]) -> Iterator[str]:
-        self.calls.append(("stream", list(system_blocks), list(messages)))
+        self.calls.append(ProviderCall("stream", list(system_blocks), list(messages)))
         if self.fail_before_first:
             raise ProviderError("stub: provider down")
         chunks = self._chunks(messages) if callable(self._chunks) else self._chunks
@@ -190,7 +199,7 @@ class StubProvider:
     def complete_with_usage(
         self, system_blocks: Sequence[dict], messages: Sequence[dict]
     ) -> tuple[str, Usage | None]:
-        self.calls.append(("complete", list(system_blocks), list(messages)))
+        self.calls.append(ProviderCall("complete", list(system_blocks), list(messages)))
         if self.fail_before_first:
             raise ProviderError("stub: provider down")
         text = self._completion(messages) if callable(self._completion) else self._completion
@@ -204,6 +213,7 @@ __all__ = [
     "DEFAULT_MODEL",
     "Usage",
     "Provider",
+    "ProviderCall",
     "ProviderError",
     "AnthropicProvider",
     "StubProvider",

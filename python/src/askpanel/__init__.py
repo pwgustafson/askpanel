@@ -39,11 +39,11 @@ from .protocol import (
     SummarizeRequest,
     SummaryOut,
 )
-from .provider import AnthropicProvider, Provider, ProviderError, StubProvider, Usage
+from .provider import AnthropicProvider, Provider, ProviderCall, ProviderError, StubProvider, Usage
 from .router import QuotaExceeded, call_host, create_router
 from .sinks import github_issue, webhook
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "__version__",
@@ -76,6 +76,7 @@ __all__ = [
     "DEFAULT_INTERVIEW_AGENDA",
     # providers
     "Provider",
+    "ProviderCall",
     "ProviderError",
     "AnthropicProvider",
     "StubProvider",

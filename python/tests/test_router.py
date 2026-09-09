@@ -283,10 +283,13 @@ def test_summarize(client, app_and_config):
     assert body["problem"] == "Stub problem"
     assert body["workaround"] == ""
     assert body["outcome"] == "Stub outcome"
-    assert "**Stub title**" in body["summary"]
-    kind, blocks, messages = config.provider.calls[0]
+    assert body["summary"] == "Problem: Stub problem\n\nWhat done looks like: Stub outcome"
+    assert body["already_supported"] is False
+    call = config.provider.calls[0]
+    assert call.op == "complete"  # ProviderCall named tuple
+    kind, blocks, messages = call
     assert kind == "complete"
-    assert "Mode: summarize" in blocks[1]["text"]
+    assert "Mode: summarize a feature request" in blocks[1]["text"]
     assert messages[0]["content"].startswith("[Screen: Albums]")
     assert messages[-1]["role"] == "user"  # trailing assistant turn gets a user nudge
 
@@ -315,7 +318,31 @@ def test_summarize_plain_complete_provider():
     app, _ = make_app(provider=Plain())
     r = TestClient(app).post("/api/askpanel/summarize", json={"mode": "help", "messages": [U]})
     assert r.json()["title"] == "Plain"
-    assert r.json()["summary"] == "s"
+    # the model's own "summary" is ignored; the server renders a mode-shaped plain text
+    assert r.json()["summary"] == (
+        "What they asked: p\n\nWhat the guide covered: w\n\nStill unanswered: o"
+    )
+
+
+def test_summarize_help_mode_uses_question_prompt_and_labels():
+    stub = StubProvider(
+        completion='{"title": "How to share", "problem": "Wanted to share a collection", '
+        '"workaround": "The guide explains Share", "outcome": "", "already_supported": true, '
+        '"summary": "IGNORED **bold**"}'
+    )
+    app, config = make_app(provider=stub)
+    r = TestClient(app).post("/api/askpanel/summarize", json={"mode": "help", "messages": [U, A]})
+    body = r.json()
+    assert body["already_supported"] is True
+    assert body["summary"] == (
+        "What they asked: Wanted to share a collection\n\n"
+        "What the guide covered: The guide explains Share\n\n"
+        "The guide answered this fully."
+    )
+    assert "**" not in body["summary"]
+    assert "Mode: summarize a question" in config.provider.calls[0].system_blocks[1]["text"]
+    # the corpus block is still the shared cached one
+    assert config.provider.calls[0].system_blocks[0] is config.system_blocks("help")[0]
 
 
 @pytest.mark.parametrize(

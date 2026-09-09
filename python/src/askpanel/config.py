@@ -97,8 +97,10 @@ class AskPanelConfig:
             return False
         return True
 
-    def instructions_for(self, mode: str) -> str:
-        """The mode-specific instruction block (``"help"``, ``"interview"``, ``"summarize"``)."""
+    def instructions_for(self, mode: str, conversation_mode: str = "interview") -> str:
+        """The instruction block for ``mode`` (``"help"``, ``"interview"``, or
+        ``"summarize"``). For ``"summarize"``, ``conversation_mode`` picks the shape:
+        a question-shaped note for ``"help"``, a request for ``"interview"``."""
         if mode == "help":
             return prompts.help_instructions(self.product_name, self.extra_instructions)
         if mode == "interview":
@@ -109,13 +111,15 @@ class AskPanelConfig:
                 self.extra_instructions,
             )
         if mode == "summarize":
-            return prompts.summarize_instructions(self.product_name)
+            return prompts.summarize_instructions(self.product_name, conversation_mode)
         raise ValueError(f"unknown mode {mode!r}")
 
-    def system_blocks(self, mode: str) -> list[dict]:
-        """Cached corpus block + instructions for ``mode``."""
+    def system_blocks(self, mode: str, conversation_mode: str = "interview") -> list[dict]:
+        """Cached corpus block + instructions for ``mode`` (see ``instructions_for``)."""
         return corpus_mod.system_blocks(
-            self.corpus_text or "", self.product_name, self.instructions_for(mode)
+            self.corpus_text or "",
+            self.product_name,
+            self.instructions_for(mode, conversation_mode),
         )
 
 
