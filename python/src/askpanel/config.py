@@ -14,13 +14,15 @@ from .protocol import (
     DEFAULT_MAX_MESSAGES,
     MAX_CONTEXT_CHARS,
     MODES,
-    EscalationPayload,
 )
 from .provider import AnthropicProvider, Provider, Usage, provider_configured
 
-OnEscalate = Callable[[EscalationPayload, Any], Awaitable[Any]]
-Quota = Callable[[Any], Awaitable[bool]]
-OnTurn = Callable[[Any, str, Usage | None], Awaitable[None]]
+# Host callbacks may be ``async def`` or plain ``def`` (sync ones run in a threadpool).
+OnEscalate = Callable[
+    ..., Awaitable[Any] | Any
+]  # (payload, user[, request]) -> EscalationResult | dict | str | None
+Quota = Callable[..., Awaitable[Any] | Any]  # (user[, mode]) -> bool | str
+OnTurn = Callable[[Any, str, Usage | None], Awaitable[None] | None]
 ContextValidator = Callable[[str], bool]
 
 

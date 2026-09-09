@@ -492,3 +492,121 @@ def test_anthropic_provider_unconfigured_without_key(monkeypatch):
     assert AnthropicProvider(api_key="k").configured is True
     monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
     assert AnthropicProvider().api_key == "env-key"
+
+
+# --- 0.1.1: sync callbacks, request passthrough, quota messages (AP-1, AP-6) ---------
+
+
+def test_sync_on_escalate_runs_in_threadpool_and_gets_request():
+    import threading
+
+    seen = {}
+
+    def on_escalate(payload, user, request):
+        seen["thread"] = threading.current_thread().name
+        seen["path"] = request.url.path
+        seen["user"] = user.email
+        return {"ok": True, "id": "sync-1"}
+
+    app, _ = make_app(on_escalate=on_escalate)
+    r = TestClient(app).post(
+        "/api/askpanel/escalate",
+        json={"mode": "help", "kind": "question", "title": "T", "details": "d"},
+    )
+    assert r.status_code == 200 and r.json()["id"] == "sync-1"
+    assert seen["path"] == "/api/askpanel/escalate"
+    assert seen["user"] == "pat@example.com"
+    assert "MainThread" not in seen["thread"]
+
+
+def test_async_on_escalate_with_request_kwarg():
+    async def on_escalate(payload, user, request=None):
+        return {"ok": True, "message": request.headers.get("x-test", "none")}
+
+    app, _ = make_app(on_escalate=on_escalate)
+    r = TestClient(app).post(
+        "/api/askpanel/escalate",
+        json={"mode": "help", "kind": "question", "title": "T", "details": "d"},
+        headers={"x-test": "hello"},
+    )
+    assert r.json()["message"] == "hello"
+
+
+def test_sync_quota_and_on_turn():
+    calls = []
+
+    def quota(user):
+        calls.append("quota")
+        return True
+
+    def on_turn(user, mode, usage):
+        calls.append(("turn", mode))
+
+    app, _ = make_app(quota=quota, on_turn=on_turn)
+    r = TestClient(app).post("/api/askpanel/chat", json={"mode": "help", "messages": [U]})
+    assert r.status_code == 200
+    assert calls == ["quota", ("turn", "help")]
+
+
+def test_quota_message_and_mode():
+    def quota(user, mode):
+        return f"You've used today's 50 {mode} turns — try again tomorrow"
+
+    app, _ = make_app(quota=quota)
+    r = TestClient(app).post("/api/askpanel/chat", json={"mode": "help", "messages": [U]})
+    assert r.status_code == 429
+    assert r.json()["detail"] == "You've used today's 50 help turns — try again tomorrow"
+
+
+def test_quota_exception():
+    from askpanel import QuotaExceeded
+
+    async def quota(user):
+        raise QuotaExceeded("Nope, not today")
+
+    app, _ = make_app(quota=quota)
+    r = TestClient(app).post("/api/askpanel/summarize", json={"mode": "help", "messages": [U]})
+    assert r.status_code == 429
+    assert r.json()["detail"] == "Nope, not today"
+
+
+def test_quota_none_is_denied_with_default_message():
+    app, _ = make_app(quota=lambda user: None)
+    r = TestClient(app).post("/api/askpanel/chat", json={"mode": "help", "messages": [U]})
+    assert r.status_code == 429
+    assert r.json()["detail"] == "You have reached the limit for now"
+
+
+def test_on_turn_not_called_on_429_or_503_but_called_on_mid_stream_failure():
+    turns = []
+
+    async def on_turn(user, mode, usage):
+        turns.append(usage)
+
+    app, _ = make_app(on_turn=on_turn, quota=lambda u: False)
+    TestClient(app).post("/api/askpanel/chat", json={"mode": "help", "messages": [U]})
+    assert turns == []
+
+    app, _ = make_app(on_turn=on_turn, provider=StubProvider(fail_before_first=True))
+    TestClient(app).post("/api/askpanel/chat", json={"mode": "help", "messages": [U]})
+    assert turns == []
+
+    app, _ = make_app(on_turn=on_turn, provider=StubProvider(chunks=["a", "b"], fail_after=1))
+    r = TestClient(app).post("/api/askpanel/chat", json={"mode": "help", "messages": [U]})
+    assert frames(r)[-1]["type"] == "error"
+    assert turns == [None]
+
+
+def test_payload_as_text_and_transcript_text():
+    from askpanel import EscalationPayload, Message
+
+    p = EscalationPayload(mode="help", kind="question", title="Bulk delete", details="Let me.")
+    assert p.as_text() == "Bulk delete\n\nLet me."
+    p.details = "**Bulk delete**\n\nsummary body"
+    assert p.as_text() == p.details
+    p.details = "bulk delete is what I want"
+    assert p.as_text() == p.details
+    p.details = ""
+    assert p.as_text() == "Bulk delete"
+    p.transcript = [Message(role="user", content="hi "), Message(role="assistant", content="hello")]
+    assert p.transcript_text() == "User: hi\n\nAssistant: hello"

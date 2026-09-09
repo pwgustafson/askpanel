@@ -202,10 +202,31 @@ class EscalationPayload(BaseModel):
     kind: Kind
     title: str
     details: str
-    transcript: list[Message]
+    transcript: list[Message] = Field(default_factory=list)
     context: str | None = None
     summary: SummaryOut | None = None
     protocol: int = PROTOCOL_VERSION
+
+    def as_text(self) -> str:
+        """``title`` and ``details`` as one string, for hosts whose feedback store has a
+        single free-text field. The title is not repeated when ``details`` already
+        starts with it."""
+        details = self.details.strip()
+        title = self.title.strip()
+        if not details:
+            return title
+        if details.lower().startswith(title.lower()) or details.lower().startswith(
+            f"**{title.lower()}**"
+        ):
+            return details
+        return f"{title}\n\n{details}"
+
+    def transcript_text(self) -> str:
+        """The transcript as ``User: …`` / ``Assistant: …`` lines."""
+        return "\n\n".join(
+            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content.strip()}"
+            for m in self.transcript
+        )
 
 
 class EscalationResult(BaseModel):

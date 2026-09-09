@@ -40,15 +40,17 @@ from .protocol import (
     SummaryOut,
 )
 from .provider import AnthropicProvider, Provider, ProviderError, StubProvider, Usage
-from .router import create_router
+from .router import QuotaExceeded, call_host, create_router
 from .sinks import github_issue, webhook
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "__version__",
     "AskPanelConfig",
     "create_router",
+    "QuotaExceeded",
+    "call_host",
     # protocol
     "PROTOCOL_VERSION",
     "PROTOCOL_HEADER",

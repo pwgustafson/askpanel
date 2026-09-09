@@ -35,6 +35,13 @@ from .provider import Usage
 
 log = logging.getLogger("askpanel")
 
+QUOTA_MESSAGE = "You have reached the limit for now"
+
+
+class QuotaExceeded(Exception):
+    """Raise from ``quota`` to reject with a 429 and this message as ``detail``."""
+
+
 _PROTOCOL_HEADERS = {PROTOCOL_HEADER: str(PROTOCOL_VERSION)}
 _STREAM_HEADERS = {
     **_PROTOCOL_HEADERS,
@@ -75,6 +82,32 @@ async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _accepts(fn: Any, name: str, position: int) -> bool:
+    """Does ``fn`` take a parameter called ``name`` (or at least ``position + 1`` positionals)?"""
+    try:
+        params = list(inspect.signature(fn).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind is p.VAR_KEYWORD for p in params) or any(p.name == name for p in params):
+        return True
+    positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    return len(positional) > position or any(p.kind is p.VAR_POSITIONAL for p in params)
+
+
+async def call_host(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call a host callback that may be ``async def`` or plain ``def``.
+
+    Sync callables run in Starlette's threadpool (like sync FastAPI routes) so a
+    blocking ORM commit never stalls the event loop.
+    """
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    # Plain functions run in a thread; a callable object whose __call__ is async
+    # returns a coroutine from the thread, which we then await here.
+    result = await run_in_threadpool(fn, *args, **kwargs)
+    return await _maybe_await(result)
 
 
 _JSON_FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
@@ -133,15 +166,34 @@ def create_router(config: AskPanelConfig) -> APIRouter:
         if not config.context_ok(body.context):
             raise _error(422, _detail(["context"], "unknown context"))
 
-    async def _check_quota(user: Any) -> None:
-        if config.quota is not None and not await _maybe_await(config.quota(user)):
-            raise _error(429, "Quota exceeded")
+    quota_takes_mode = config.quota is not None and _accepts(config.quota, "mode", 1)
+    escalate_takes_request = _accepts(config.on_escalate, "request", 2)
+
+    async def _check_quota(user: Any, mode: str) -> None:
+        """Runs before every model call. ``quota`` may return True (allowed), False/None
+        (429 with the default message), or a str (429 with that message as ``detail``);
+        raising ``QuotaExceeded(message)`` does the same."""
+        if config.quota is None:
+            return
+        try:
+            args = (user, mode) if quota_takes_mode else (user,)
+            verdict = await call_host(config.quota, *args)
+        except QuotaExceeded as exc:
+            raise _error(429, str(exc) or QUOTA_MESSAGE) from None
+        if verdict is True:
+            return
+        if isinstance(verdict, str) and verdict:
+            raise _error(429, verdict)
+        if not verdict:
+            raise _error(429, QUOTA_MESSAGE)
 
     async def _on_turn(user: Any, mode: str, usage: Usage | None) -> None:
+        """Runs after every model call that returned a 200 — including a stream that
+        died midway (``usage`` is then ``None``). Never after a 429/422/503."""
         if config.on_turn is None:
             return
         try:
-            await _maybe_await(config.on_turn(user, mode, usage))
+            await call_host(config.on_turn, user, mode, usage)
         except Exception:  # noqa: BLE001 — never let metrics break the response
             log.exception("askpanel on_turn failed")
 
@@ -164,7 +216,7 @@ def create_router(config: AskPanelConfig) -> APIRouter:
         _require_enabled()
         body: ChatRequest = await _read_body(request, ChatRequest)
         _check_mode_and_context(body)
-        await _check_quota(user)
+        await _check_quota(user, body.mode)
 
         messages = apply_context(body.messages, body.context)
         blocks = config.system_blocks(body.mode)
@@ -186,6 +238,7 @@ def create_router(config: AskPanelConfig) -> APIRouter:
             except Exception as exc:  # noqa: BLE001 — mid-stream: keep partial text
                 log.warning("askpanel provider failed mid-stream: %s", exc)
                 yield encode_frame(ErrorFrame(message="The assistant stopped unexpectedly"))
+                await _on_turn(user, body.mode, None)
                 return
             yield encode_frame(DoneFrame())
             usage = step.returned if isinstance(step.returned, Usage) else None
@@ -198,7 +251,7 @@ def create_router(config: AskPanelConfig) -> APIRouter:
         _require_enabled()
         body: SummarizeRequest = await _read_body(request, SummarizeRequest)
         _check_mode_and_context(body)
-        await _check_quota(user)
+        await _check_quota(user, body.mode)
 
         messages = apply_context(body.messages, body.context)
         if messages[-1]["role"] == "assistant":
@@ -237,10 +290,13 @@ def create_router(config: AskPanelConfig) -> APIRouter:
             context=body.context,
             summary=body.summary,
         )
-        result = EscalationResult.coerce(await _maybe_await(config.on_escalate(payload, user)))
+        kwargs = {"request": request} if escalate_takes_request else {}
+        result = EscalationResult.coerce(
+            await call_host(config.on_escalate, payload, user, **kwargs)
+        )
         return JSONResponse(result.model_dump(exclude_none=True), headers=_PROTOCOL_HEADERS)
 
     return router
 
 
-__all__ = ["create_router", "parse_summary"]
+__all__ = ["create_router", "parse_summary", "call_host", "QuotaExceeded", "QUOTA_MESSAGE"]
