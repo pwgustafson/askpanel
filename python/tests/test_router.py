@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import CORPUS, current_user, frames, make_app
 from fastapi.testclient import TestClient
 
 from askpanel import AskPanelConfig, StubProvider, Usage
 from askpanel.router import parse_summary
-from conftest import CORPUS, current_user, frames, make_app
 
 U = {"role": "user", "content": "How do I share an album?"}
 A = {"role": "assistant", "content": "Open it and choose Share."}
@@ -307,7 +307,10 @@ def test_summarize_plain_complete_provider():
             yield "x"
 
         def complete(self, b, m):
-            return '{"title": "Plain", "problem": "p", "workaround": "w", "outcome": "o", "summary": "s"}'
+            return (
+                '{"title": "Plain", "problem": "p", "workaround": "w", '
+                '"outcome": "o", "summary": "s"}'
+            )
 
     app, _ = make_app(provider=Plain())
     r = TestClient(app).post("/api/askpanel/summarize", json={"mode": "help", "messages": [U]})

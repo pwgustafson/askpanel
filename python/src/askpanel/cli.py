@@ -61,9 +61,10 @@ def _cmd_prompt(args: argparse.Namespace) -> int:
 
 
 def _find_demo_dir(explicit: str | None) -> Path | None:
+    if explicit:  # an explicit --dir is authoritative; don't fall back to guessing
+        d = Path(explicit)
+        return d if (d / "server.py").is_file() else None
     candidates: list[Path] = []
-    if explicit:
-        candidates.append(Path(explicit))
     if os.environ.get("ASKPANEL_DEMO_DIR"):
         candidates.append(Path(os.environ["ASKPANEL_DEMO_DIR"]))
     here = Path.cwd()
