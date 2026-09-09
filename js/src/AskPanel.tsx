@@ -159,7 +159,14 @@ export function AskPanel(props: AskPanelProps) {
     [panel],
   );
 
-  // Open straight into a mode, or reset the view when the panel is closed.
+  // Every open re-reads getContext(), so the entry screen's starters match the screen
+  // the panel is opened on — not the one it was mounted or last used on.
+  useEffect(() => {
+    if (open) panel.refreshContext();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Open straight into a mode.
   useEffect(() => {
     if (open && initialMode && view === "entry" && enabled) startMode(initialMode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -475,7 +482,16 @@ export function AskPanel(props: AskPanelProps) {
               <button type="button" className="askpanel-button askpanel-button-secondary" onClick={startOver}>
                 {L.startOver}
               </button>
-              <button type="button" className="askpanel-button" onClick={() => onOpenChange(false)}>
+              <button
+                type="button"
+                className="askpanel-button"
+                onClick={() => {
+                  // Done: close and forget the sent conversation, so the next open
+                  // starts on the entry screen with a clean transcript.
+                  startOver();
+                  onOpenChange(false);
+                }}
+              >
                 {L.sentDone}
               </button>
             </div>

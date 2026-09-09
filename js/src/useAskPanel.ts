@@ -59,9 +59,11 @@ export interface AskPanelState {
   sent: EscalateResult | null;
   /** Most recent error; cleared on the next action. */
   error: AskPanelError | null;
-  /** The context captured at `open()`. */
+  /** The context captured at `open()` for the current conversation. */
   context: string | undefined;
-  /** Starter questions for the current context (from `/status`). */
+  /** Starter questions for the screen the panel was last opened on (from `/status`,
+   *  keyed by what `getContext()` returned at the last `open()`/`refreshContext()`;
+   *  `"*"` is the fallback key). */
   starters: string[];
 }
 
@@ -82,6 +84,9 @@ export interface AskPanelActions {
   reset: () => void;
   /** Re-probe `/status`. */
   refreshStatus: () => Promise<void>;
+  /** Re-read `getContext()` for the entry screen's starters (the panel calls this each
+   *  time it is opened; call it yourself if you use the hook headless). */
+  refreshContext: () => void;
   /** The underlying client, for hosts that need a custom flow. */
   client: AskPanelClient;
 }
@@ -134,6 +139,9 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
   const [sent, setSent] = useState<EscalateResult | null>(null);
   const [error, setError] = useState<AskPanelError | null>(null);
   const [context, setContext] = useState<string | undefined>(undefined);
+  // The screen the panel is currently being shown on — re-read from getContext() at every
+  // open()/refreshContext(); drives `starters` on the entry screen.
+  const [liveContext, setLiveContext] = useState<string | undefined>(undefined);
 
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
@@ -186,10 +194,15 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
     return c ? String(c).slice(0, 200) : undefined;
   }, []);
 
+  const refreshContext = useCallback(() => {
+    setLiveContext(readContext());
+  }, [readContext]);
+
   const open = useCallback(
     (m: Mode) => {
       abortCurrent();
       const ctx = readContext();
+      setLiveContext(ctx);
       modeRef.current = m;
       contextRef.current = ctx;
       messagesRef.current = [];
@@ -368,9 +381,9 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
 
   const starters = useMemo(() => {
     if (!status) return [];
-    const key = context ?? readContext();
+    const key = liveContext ?? readContext();
     return (key && status.starters[key]) || status.starters["*"] || [];
-  }, [status, context, readContext]);
+  }, [status, liveContext, readContext]);
 
   return {
     status,
@@ -396,6 +409,7 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
     escalate,
     reset,
     refreshStatus,
+    refreshContext,
     client,
   };
 }

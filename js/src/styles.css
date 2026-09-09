@@ -12,6 +12,7 @@
   --askpanel-accent-fg: #ffffff;
   --askpanel-surface: #f5f5f7;
   --askpanel-user-bg: #e8effc;
+  --askpanel-user-fg: var(--askpanel-fg);
   --askpanel-error-bg: #fde8e8;
   --askpanel-error-fg: #9b1c1c;
   --askpanel-scrim: rgba(0, 0, 0, 0.35);
@@ -205,6 +206,12 @@
 .askpanel-msg-user {
   align-self: flex-end;
   background: var(--askpanel-user-bg);
+  color: var(--askpanel-user-fg);
+}
+
+.askpanel-msg-user .askpanel-msg-who {
+  color: var(--askpanel-user-fg);
+  opacity: 0.75;
 }
 
 .askpanel-msg-who {

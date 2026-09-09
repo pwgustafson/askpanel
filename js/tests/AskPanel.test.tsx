@@ -76,6 +76,72 @@ describe("AskPanel", () => {
     expect(fetch.calls).toHaveLength(0);
   });
 
+  it("renders when mounted already open", async () => {
+    const fetch = mockFetch({ "/status": () => json(STATUS) });
+    render(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} />);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Ask a question")).toBeTruthy());
+  });
+
+  it("re-reads getContext() at every open so entry-screen starters follow the screen", async () => {
+    let screenKey: string | undefined = undefined; // nothing known at mount
+    const status = { ...STATUS, starters: { "*": ["Generic?"], Albums: ["Albums Q?"], People: ["People Q?"] } };
+    const fetch = mockFetch({
+      "/status": () => json(status),
+      "/chat": () => sse([frames({ type: "delta", text: "ok" }, { type: "done" })]),
+    });
+    const props = { base: "/api/askpanel", fetch, getContext: () => screenKey };
+    const { rerender } = render(<AskPanel {...props} open={false} onOpenChange={() => {}} />);
+    await waitFor(() => expect(fetch.calls.length).toBe(1));
+
+    screenKey = "Albums";
+    rerender(<AskPanel {...props} open onOpenChange={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Albums Q?")).toBeTruthy());
+    expect(screen.queryByText("Generic?")).toBeNull();
+
+    // chat on Albums, then close and reopen on People: the entry screen shows People's starters
+    fireEvent.click(screen.getByText("Ask a question"));
+    const input = screen.getByPlaceholderText("Ask a question…");
+    fireEvent.change(input, { target: { value: "hi" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.getByText("ok")).toBeTruthy());
+    expect(fetch.calls.find((c) => c.url.endsWith("/chat"))!.body).toMatchObject({ context: "Albums" });
+    fireEvent.click(screen.getByLabelText("Start over"));
+    rerender(<AskPanel {...props} open={false} onOpenChange={() => {}} />);
+    screenKey = "People";
+    rerender(<AskPanel {...props} open onOpenChange={() => {}} />);
+    await waitFor(() => expect(screen.getByText("People Q?")).toBeTruthy());
+    expect(screen.queryByText("Albums Q?")).toBeNull();
+  });
+
+  it("Done after Sent closes, clears the transcript, and the next open is the entry screen", async () => {
+    const fetch = mockFetch({
+      "/status": () => json(STATUS),
+      "/chat": () => sse([frames({ type: "delta", text: "reply" }, { type: "done" })]),
+      "/summarize": () => json(SUMMARY),
+      "/escalate": () => json({ ok: true, message: "Got it" }),
+    });
+    const onOpenChange = vi.fn();
+    const { rerender } = render(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={onOpenChange} />);
+    await waitFor(() => screen.getByText("Ask a question"));
+    fireEvent.click(screen.getByText("Ask a question"));
+    const input = screen.getByPlaceholderText("Ask a question…");
+    fireEvent.change(input, { target: { value: "hello" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => screen.getByText("reply"));
+    fireEvent.click(screen.getByText("Send this to the team"));
+    await waitFor(() => screen.getByText("Review before sending"));
+    fireEvent.click(screen.getByText("Send to the team"));
+    await waitFor(() => screen.getByText("Got it"));
+    fireEvent.click(screen.getByText("Done"));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    rerender(<AskPanel base="/api/askpanel" fetch={fetch} open={false} onOpenChange={onOpenChange} />);
+    rerender(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={onOpenChange} />);
+    expect(screen.getByText("Ask a question")).toBeTruthy(); // entry screen, not chat
+    expect(screen.queryByText("hello")).toBeNull();
+    expect(screen.queryByText("reply")).toBeNull();
+  });
+
   it("renders the footer slot on the entry screen only", async () => {
     const fetch = mockFetch({ "/status": () => json(STATUS) });
     render(
