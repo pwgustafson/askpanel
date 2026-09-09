@@ -5,6 +5,9 @@ from pydantic import ValidationError
 
 from askpanel.protocol import (
     ChatRequest,
+    DeltaFrame,
+    DoneFrame,
+    ErrorFrame,
     EscalateRequest,
     EscalationResult,
     Message,
@@ -12,9 +15,6 @@ from askpanel.protocol import (
     SummaryOut,
     apply_context,
     encode_frame,
-    DeltaFrame,
-    DoneFrame,
-    ErrorFrame,
 )
 
 U = {"role": "user", "content": "hi"}
