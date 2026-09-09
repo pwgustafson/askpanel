@@ -17,8 +17,9 @@ module stores nothing; the browser holds the transcript.
 - npm package `@askpanel/react` — a headless hook and a default panel (`js/`)
 - A [documented wire protocol](docs/protocol.md) so either half can be swapped out
 
-**Status:** v0.1.0, under construction against two host applications. Private until
-then. See [`SPEC.md`](SPEC.md) for the design.
+**Status:** v0.1.4 — integrated end to end in two host applications (cookie-session
+multi-tenant, and JWT single-tenant). Private until published. See [`SPEC.md`](SPEC.md)
+for the design and [`CHANGELOG.md`](CHANGELOG.md) for what changed.
 
 ## Quickstart (about 15 minutes)
 
@@ -161,12 +162,14 @@ Without an API key the demo answers with a canned reply so you can still click t
 
 | | |
 |---|---|
+| [`docs/adopting.md`](docs/adopting.md) | The 15-step adoption checklist, in the order real hosts did it |
 | [`docs/configuration.md`](docs/configuration.md) | Every option of `AskPanelConfig`, `useAskPanel`, and `<AskPanel>` |
 | [`docs/corpus-guide.md`](docs/corpus-guide.md) | How to write a corpus that works; the lint rules and why |
 | [`docs/integrations/fastapi.md`](docs/integrations/fastapi.md) | Auth, escalation sinks, quotas, contexts, testing |
 | [`docs/integrations/react.md`](docs/integrations/react.md) | The hook, the panel, theming, custom triggers |
 | [`docs/protocol.md`](docs/protocol.md) | The wire format, for other stacks |
 | [`SPEC.md`](SPEC.md) | Design and principles |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each 0.1.x |
 
 ## Development
 

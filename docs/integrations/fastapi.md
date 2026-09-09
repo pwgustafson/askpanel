@@ -192,11 +192,19 @@ light markup (`**bold**`, `- ` bullets) that `Prose`/`<AskPanelTranscript>` rend
 Store them as-is (so the React component can render them); for plain-text display use
 `payload.transcript_text()` (strips the markup by default) or `askpanel.plain_text(str)`.
 
-**Title vs. details.** `payload.title` is always present (1–200 chars, user-edited;
-prefilled from the AI summary's title, or the first user message, or typed by the user
-in the bug form). `payload.details` is the user-edited body and may be empty. If your
-store has one free-text field, use `payload.as_text()`, which joins them without
-repeating the title when the details already begin with it.
+**Title vs. details — two recipes, pick one.** `payload.title` is always present (1–200
+chars, user-edited; prefilled from the AI summary's title, or the first user message,
+or typed by the user in the bug form). `payload.details` is the user-edited body and may
+be empty.
+
+1. **You keep the title** (a title column, or the whole `payload.model_dump()` in a JSON
+   column for `<AskPanelTranscript>`): store `details` **as-is**. Do not use `as_text()`.
+2. **One free-text field and no title column**: store `payload.as_text()` (title, blank
+   line, details). `EscalationPayload.split_text(text)` gets `(title, details)` back, and
+   `<AskPanelTranscript>` recognises the folded-in title when you feed it such a row.
+
+Folding the title into `details` *and* keeping it elsewhere makes it show twice — that
+was the mistake the 0.1.2 docs invited.
 
 Notes:
 
@@ -291,8 +299,26 @@ per process** — it resets on restart and is not shared between workers, so it 
 best-effort guard, not an audit trail. For a shared/durable cap pass `counter=` with
 `get(key, day) -> int` and `incr(key, day)` (sync or async) over Redis or a table.
 `count_failed` decides whether a stream that died midway (`usage is None`) counts;
-default `True`, because the model was called. If you also log cost, wrap: `on_turn`
-can be your own function that calls `await cap.on_turn(user, mode, usage)` first.
+default `True`, because the model was called.
+
+**If your cost table is the counter**, make it one write: give `incr` `usage=` and
+`mode=` keyword parameters (the cap passes whatever the signature accepts), make it the
+insert, make `get` the count for `(key, day)`, and drop your own `on_turn`:
+
+```python
+class PromptLogCounter:
+    def get(self, key, day):
+        return count_prompt_logs(user_id=key, day=day)
+    async def incr(self, key, day, usage=None, mode=None):
+        await insert_prompt_log(user_id=key, mode=mode, model=usage.model if usage else None,
+                                input_tokens=usage.input_tokens if usage else None, …)
+
+cap = DailyTurnCap(50, counter=PromptLogCounter())
+config = AskPanelConfig(..., quota=cap.quota, on_turn=cap.on_turn)     # one row per turn
+```
+
+If you'd rather keep them separate, `on_turn` can be your own function that calls
+`await cap.on_turn(user, mode, usage)` first.
 
 `on_turn` does not receive the message text (by design — the module never hands the
 conversation to anything but `on_escalate`). A cost row is `user`, `mode`,
@@ -318,13 +344,25 @@ other change.
 **What "configured" means — and doesn't.** `enabled` never touches the network. For
 `AnthropicProvider`, configured means *a non-empty key string is present*; the key may
 be revoked and the model id may not exist, and you'd find out as a 503 on the first
-`/chat` while `/status` keeps saying `enabled: true`. Verify at startup instead:
+`/chat` while `/status` keeps saying `enabled: true`. Verify at startup instead — and never let it block boot: `verify()` is synchronous and
+makes one network round-trip, so in an async lifespan use `averify()` (a worker thread)
+inside a try/except:
 
 ```python
-problems = config.verify()          # [] when fine; never called by the router
-if problems:
-    log.error("askpanel: %s", "; ".join(problems))
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        problems = await config.averify()      # [] when fine; never called by the router
+    except Exception as exc:                   # the help panel must not stop the app booting
+        problems = [f"verify raised {exc!r}"]
+    if problems:
+        log.error("askpanel_not_ready problems=%s", problems)
+    else:
+        log.info("askpanel_ready corpus_chars=%d", len(config.corpus_text or ""))
+    yield
 ```
+
+(Sync startup code can call `config.verify()` directly.)
 
 `verify()` checks the corpus is non-empty and, when the provider has `check()`, makes
 one free request (`models.retrieve`) that validates both the key and the model id.

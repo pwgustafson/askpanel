@@ -185,10 +185,13 @@ function FeedbackButton() {
 }
 ```
 
-`useAskPanelStatus` memoises the result per `base` for the life of the page, so the
-trigger and the panel between them cost one `/status` request; call
-`clearAskPanelStatusCache()` after login/logout. Alternatively, keep a mounted panel and
-learn the flag from the probe it already makes: `<AskPanel onStatus={(s) => setEnabled(s.enabled)} />`.
+`useAskPanelStatus` and the panel's own probe (`useAskPanel`) share **one per-`base`
+memo**, so the trigger plus a mounted panel — even under React StrictMode's doubled
+effects — cost exactly one `/status` request per page load, and the panel keeps its
+starters. `refresh()`/`refreshStatus()` bypass the memo; call
+`clearAskPanelStatusCache()` after login/logout so the next mount re-probes.
+Alternatively, keep a mounted panel and learn the flag from the probe it already makes:
+`<AskPanel onStatus={(s) => setEnabled(s.enabled)} />`.
 
 ## Theming
 
@@ -326,7 +329,8 @@ import "@askpanel/react/styles.css";
 ```
 
 It renders the title, kind / mode / screen chips, the details (unless identical to the
-summary text), the structured summary with **mode-aware labels** (help: what they asked
+summary text — a leading paragraph equal to the title, the `as_text()` form, is ignored
+for that comparison), the structured summary with **mode-aware labels** (help: what they asked
 / what the guide covered / still unanswered; interview: problem / current workaround /
 what done looks like; empty fields omitted), an "Answered by the guide" / "Already
 possible today" chip when `already_supported` is set, and the conversation in a

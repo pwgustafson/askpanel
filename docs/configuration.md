@@ -128,7 +128,10 @@ returns the message as the 429 text after that; `cap.on_turn` counts. The defaul
 `MemoryCounter` is per process and resets on restart (best-effort); pass `counter=` with
 `get(key, day) -> int` / `incr(key, day)` (sync or async) for Redis or a table.
 `count_failed=False` skips streams that died midway. `await cap.remaining(user)` is
-available for a UI hint.
+available for a UI hint. A counter's `incr` may declare `usage=` and/or `mode=` keyword
+parameters and the cap passes them — so a cost table can be the counter: `incr` is the
+insert (model + token counts from `usage`), `get` the count, and you drop your own
+`on_turn`.
 
 **Order of one `/chat` request:** auth dependency → `enabled` check (503) → body validation
 (422) → mode/context check (422) → `quota` (429) → first model chunk (503 if it fails) →
@@ -166,7 +169,8 @@ assert "[Screen: Albums]" in provider.calls[0].messages[0]["content"]
 | Property | What it is |
 |---|---|
 | `config.enabled` | `True` when the provider is configured **and** the corpus is non-empty. Drives `/status.enabled`; when `False`, `/chat` and `/summarize` return 503 but `/escalate` still works. **"Configured" means credentials are present, not valid** — for `AnthropicProvider`, a non-empty key string. The key's validity and the model id are not checked (no network) until the first call. |
-| `config.verify()` | `list[str]` of problems, `[]` when fine. Checks the corpus is non-empty and, when the provider has `check()`, makes one free request (`models.retrieve`) that validates the key **and** the model id. Never called by the router — run it at startup / in a health check. |
+| `config.verify()` | `list[str]` of problems, `[]` when fine. Checks the corpus is non-empty and, when the provider has `check()`, makes one free request (`models.retrieve`) that validates the key **and** the model id. **Synchronous and does network** — never called by the router; call it from sync startup code. |
+| `await config.averify()` | The same, run in a worker thread — use this from an async lifespan so the round-trip never blocks the loop. |
 | `config.corpus_text` | The loaded corpus (filled in from `corpus_dir` at construction). |
 | `config.system_blocks(mode)` | The provider blocks for `"help"`, `"interview"`, or `"summarize"`. Block 0 is the cached corpus block and is identical across all three. |
 
@@ -183,12 +187,14 @@ gives plain dicts):
 | `details` | `str` ≤ 5000, may be empty | The user-edited summary (markdown-ish text: `**bold**` labels, `- ` bullets), or free text. |
 | `transcript` | `list[Message]` | `[{role, content}, …]`; `[]` when the user skipped the chat (bug reports). This is the request body's `messages` field, renamed on the Python side to say what it *is* rather than where it came from. **Assistant turns are the model's text as-is** — light markup (`**bold**`, `- ` bullets) the React `Prose` / `<AskPanelTranscript>` render. Store as-is; for plain text use `transcript_text()` (strips by default) or `plain_text()`. |
 | `context` | `str \| None` | The screen the panel was opened from; `None` when the client sent nothing. |
-| `summary` | `SummaryOut \| None` | The structured summary when `/summarize` was used: `title`, `problem`, `workaround`, `outcome`, `summary` (plain text, no markdown), `already_supported` (bool), `mode` (which mode produced it — store the whole object and it stays self-describing). The three text fields are **shaped by mode** — interview: problem / current workaround / what done looks like; help: what they asked / what the guide covered / still unanswered. `already_supported=True` means the product already does it (interview) or the guide fully answered it (help): consider filing those as questions, not features. |
+| `summary` | `SummaryOut \| None` | The structured summary when `/summarize` was used: `title`, `problem`, `workaround`, `outcome`, `summary` (plain text, no markdown), `already_supported` (bool), `mode`. `mode` is always set here: `/summarize` stamps it, and `/escalate` fills it from the request's `mode` when a client (a pre-0.1.3 panel, a non-React client) omits it — so a stored summary is always self-describing. The three text fields are **shaped by mode** — interview: problem / current workaround / what done looks like; help: what they asked / what the guide covered / still unanswered. `already_supported=True` means the product already does it (interview) or the guide fully answered it (help): consider filing those as questions, not features. |
 | `protocol` | `int` | `1`. |
 
 Helpers: `payload.as_text()` returns `title` + blank line + `details` (without repeating
-the title when `details` already starts with it) for hosts whose feedback store has a
-single free-text field; `payload.transcript_text(strip_markup=True)` renders the
+the title when `details` already starts with it) — **only** for hosts whose feedback
+store has a single free-text field *and no title column*; if you keep the title too, or
+store `model_dump()`, store `details` as-is (folding the title in just repeats it).
+`EscalationPayload.split_text(text)` → `(title, details)` reverses `as_text()`; `payload.transcript_text(strip_markup=True)` renders the
 transcript as `User: …` / `Assistant: …` blocks with the markup stripped
 (`strip_markup=False` keeps it); `askpanel.plain_text(text)` strips markup from any
 string the way `Prose` would render it (`**x**` → `x`, `- ` → `• `).
@@ -285,7 +291,7 @@ skipStatus: true, enabled: me.features.askpanel      // host already knows the f
 ## React: `useAskPanelStatus(options)`
 
 For a trigger that needs the flag before any panel is mounted. Probes `/status` once per
-`base` (memoised for the page; shared with other callers), returns
+`base` — the memo is shared with `useAskPanel`, so the panel's own probe reuses it — returns
 `{ status, enabled, loading, error, refresh }`. Options: `base`, `fetch`, `headers`,
 `credentials`, `protocolMismatch`. `clearAskPanelStatusCache()` forgets the memo (after
 login/logout).
@@ -408,7 +414,7 @@ variables and `Prose`.
 
 | Prop | Type | Default | What it does |
 |---|---|---|---|
-| `record` | `EscalationRecord` | required | The payload `on_escalate` received (`mode`, `kind`, `title`, `details`, `transcript`, `context?`, `summary?`) — i.e. `EscalationPayload.model_dump()`. |
+| `record` | `EscalationRecord` | required | The payload `on_escalate` received (`mode`, `kind`, `title`, `details`, `transcript`, `context?`, `summary?`) — i.e. `EscalationPayload.model_dump()`. `details` stored via `as_text()` (title folded in) is recognised: a leading paragraph equal to the title is ignored for the details-vs-summary dedup. |
 | `collapsed` | `boolean` | `true` | Start with the conversation `<details>` closed. |
 | `hideTitle` | `boolean` | `false` | Omit the title line when the host already shows it. |
 | `labels` | `Partial<AskPanelTranscriptLabels>` | English | Per-mode summary labels, kind/mode chip text, section captions; see `defaultTranscriptLabels`. |
