@@ -34,6 +34,44 @@ describe("AskPanel", () => {
     expect(screen.getByText("Tell us about a glitch")).toBeTruthy();
   });
 
+  it("composes the header from product_name by default and lets labels.title replace it", async () => {
+    const fetch = mockFetch({ "/status": () => json(STATUS) });
+    const { rerender } = render(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Orchard · Help")).toBeTruthy());
+    rerender(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} labels={{ title: "Drovio help" }} />);
+    expect(screen.getByText("Drovio help")).toBeTruthy();
+    expect(screen.queryByText(/Orchard ·/)).toBeNull();
+    expect(screen.getByRole("dialog").getAttribute("aria-label")).toBe("Drovio help");
+  });
+
+  it("focuses with preventScroll so the host page never jumps", async () => {
+    const calls: (FocusOptions | undefined)[] = [];
+    const orig = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (opts?: FocusOptions) {
+      calls.push(opts);
+      return orig.call(this, opts);
+    };
+    try {
+      const fetch = mockFetch({ "/status": () => json(STATUS) });
+      render(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} />);
+      await waitFor(() => screen.getByText("Ask a question"));
+      fireEvent.click(screen.getByText("Ask a question"));
+      await waitFor(() => expect(document.activeElement?.tagName).toBe("TEXTAREA"));
+    } finally {
+      HTMLElement.prototype.focus = orig;
+    }
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((c) => c?.preventScroll === true)).toBe(true);
+  });
+
+  it("skipStatus + enabled shows the chat entries without a probe", async () => {
+    const fetch = mockFetch({ "/status": () => json(STATUS) });
+    render(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} skipStatus enabled />);
+    expect(screen.getByText("Ask a question")).toBeTruthy();
+    expect(screen.getByText("Request a feature")).toBeTruthy();
+    expect(fetch.calls).toHaveLength(0);
+  });
+
   it("renders the footer slot on the entry screen only", async () => {
     const fetch = mockFetch({ "/status": () => json(STATUS) });
     render(

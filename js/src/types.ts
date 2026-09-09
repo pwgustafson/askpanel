@@ -26,6 +26,9 @@ export interface SummaryOut {
   workaround: string;
   outcome: string;
   summary: string;
+  /** Protocol 1 (additive, since server 0.1.2): the product already does this / the docs
+   *  fully answered it. Absent from older servers. */
+  already_supported?: boolean;
 }
 
 export interface ChatRequest {

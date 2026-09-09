@@ -17,6 +17,9 @@ export interface UseAskPanelOptions {
   credentials?: RequestCredentials;
   /** Skip the `/status` probe on mount (e.g. the host already knows the flag). */
   skipStatus?: boolean;
+  /** What to assume for `enabled` while `status` is null — pair with `skipStatus` when
+   *  the host learned the flag elsewhere (e.g. its own `/me`). Ignored once `/status` answers. */
+  enabled?: boolean;
 }
 
 export interface EscalateInput {
@@ -84,7 +87,16 @@ function toError(e: unknown): AskPanelError {
 }
 
 export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
-  const { base, getContext, protocolMismatch, fetch: fetchImpl, headers, credentials, skipStatus } = options;
+  const {
+    base,
+    getContext,
+    protocolMismatch,
+    fetch: fetchImpl,
+    headers,
+    credentials,
+    skipStatus,
+    enabled: assumeEnabled,
+  } = options;
 
   const client = useMemo(
     () => createClient({ base, fetch: fetchImpl, headers, credentials, onProtocolMismatch: protocolMismatch }),
@@ -338,7 +350,7 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
   return {
     status,
     statusError,
-    enabled: status?.enabled ?? false,
+    enabled: status?.enabled ?? assumeEnabled ?? false,
     mode,
     isOpen,
     messages,

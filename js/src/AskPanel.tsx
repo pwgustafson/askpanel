@@ -140,6 +140,7 @@ export function AskPanel(props: AskPanelProps) {
   const [details, setDetails] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
   const busy = streaming || summarizing || escalating;
 
   const enabledModes = useMemo<Mode[]>(() => status?.modes ?? ["help", "interview"], [status]);
@@ -164,8 +165,12 @@ export function AskPanel(props: AskPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialMode, enabled]);
 
+  // Focus without scrolling: the aside is position:fixed, and a plain focus() makes
+  // some browsers scroll the host document to the element's DOM position.
   useEffect(() => {
-    if (view === "chat" && open) inputRef.current?.focus();
+    if (!open) return;
+    if (view === "chat") inputRef.current?.focus({ preventScroll: true });
+    else asideRef.current?.focus({ preventScroll: true });
   }, [view, open]);
 
   useEffect(() => {
@@ -256,6 +261,13 @@ export function AskPanel(props: AskPanelProps) {
 
   const rootClass = ["askpanel", className].filter(Boolean).join(" ");
   const productName = status?.product_name;
+  // `labels.title` replaces the whole header; the default composes "<product> · Help".
+  const headerTitle =
+    labelOverrides?.title !== undefined
+      ? labelOverrides.title
+      : productName
+        ? `${productName} · ${L.title}`
+        : L.title;
 
   return (
     <div className={rootClass} data-askpanel-view={view}>
@@ -265,7 +277,14 @@ export function AskPanel(props: AskPanelProps) {
         onClick={requestClose}
         aria-hidden="true"
       />
-      <aside className="askpanel-aside" role="dialog" aria-modal="true" aria-label={L.title}>
+      <aside
+        ref={asideRef}
+        className="askpanel-aside"
+        role="dialog"
+        aria-modal="true"
+        aria-label={headerTitle}
+        tabIndex={-1}
+      >
         <header className="askpanel-header">
           <div className="askpanel-header-title">
             {view !== "entry" && view !== "sent" ? (
@@ -273,7 +292,7 @@ export function AskPanel(props: AskPanelProps) {
                 ‹
               </button>
             ) : null}
-            <span>{productName ? `${productName} · ${L.title}` : L.title}</span>
+            <span>{headerTitle}</span>
           </div>
           <button
             type="button"
