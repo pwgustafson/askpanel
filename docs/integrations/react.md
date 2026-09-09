@@ -135,23 +135,60 @@ full list. The header is composed as `"<product_name> · <labels.title>"` by def
 ## Authentication
 
 Requests go through `fetch` with `credentials: "same-origin"`, so a same-origin session
-cookie just works with no configuration. The hook and the panel accept the same three
-options for everything else:
+cookie just works with no configuration. The hook and the panel accept the same options
+for everything else:
 
 ```tsx
-// bearer token (read fresh on every request)
-<AskPanel … headers={() => ({ Authorization: `Bearer ${getToken()}` })} />
+// bearer token, read fresh on every request; a null token simply sends no header
+<AskPanel … headers={() => ({ Authorization: token ? `Bearer ${token}` : undefined })} />
 
 // cross-origin API with a cookie
 <AskPanel … credentials="include" />
 
 // your own fetch wrapper (adds CSRF headers, refreshes tokens, whatever it does today)
 <AskPanel … fetch={apiFetch} />
+
+// react to auth failures the way the rest of your app does
+<AskPanel … onError={(e) => { if (e.status === 401) navigate("/login"); }} />
 ```
 
-`headers` may be a plain object or a function; `fetch` must have the signature
-`(url: string, init?: RequestInit) => Promise<Response>` and return a real `Response`
-whose `body` is a `ReadableStream` (the SSE reader needs it — don't buffer).
+`headers` is typed `HeadersInput | (() => HeadersInput | undefined | null)`, where
+`HeadersInput` is any `HeadersInit` (record, `Headers`, entries) **or a record whose
+values may be `undefined`/`null`** — those keys are dropped, so the conditional above
+type-checks under `strict` without a helper.
+
+`fetch` must have the signature `(url: string, init?: RequestInit) => Promise<Response>`
+and return a real `Response` whose `body` is a `ReadableStream` (the SSE reader needs
+it — don't buffer). If your app's request wrapper returns parsed JSON and redirects on
+401 (most do), it is **not** a fit for `fetch=`: keep the panel on plain `fetch`,
+duplicate the header logic in `headers` (one line), and handle 401 with `onError`,
+which fires for every error the hook surfaces — the probe, chat, summarize, escalate —
+before it lands in `error`/`statusError`.
+
+## The trigger needs the flag too
+
+The panel hides its own chat entries when `/status` says `enabled: false`. But if your
+trigger has a *fallback* — open the panel when enabled, open the old feedback form
+otherwise — the trigger needs the flag before the panel is mounted. Two ways, no `/me`
+required:
+
+```tsx
+import { useAskPanelStatus } from "@askpanel/react";
+
+function FeedbackButton() {
+  const { enabled, loading } = useAskPanelStatus({ base: "/api/askpanel", headers: authHeaders });
+  const [open, setOpen] = useState(false);
+  if (loading) return null;
+  return enabled
+    ? <><button onClick={() => setOpen(true)}>?</button><AskPanel base="/api/askpanel" open={open} onOpenChange={setOpen} headers={authHeaders} /></>
+    : <LegacyFeedbackButton />;
+}
+```
+
+`useAskPanelStatus` memoises the result per `base` for the life of the page, so the
+trigger and the panel between them cost one `/status` request; call
+`clearAskPanelStatusCache()` after login/logout. Alternatively, keep a mounted panel and
+learn the flag from the probe it already makes: `<AskPanel onStatus={(s) => setEnabled(s.enabled)} />`.
 
 ## Theming
 
@@ -165,11 +202,24 @@ The stylesheet uses only `--askpanel-*` custom properties and **never consults
 `prefers-color-scheme`**: it ships one (light) set of defaults and follows whatever your
 app sets on the variables, so an OS-dark machine viewing your light theme gets a light
 panel. The full variable table is in [configuration.md](../configuration.md#theming).
-Override on `:root`, on `.askpanel`, or via a `className`:
+
+**The one override pattern: set the variables on `:root`.** The defaults are declared
+on `:where(:root)` — zero specificity, on the root — so a host's `:root { … }` (or a
+theme class on `<html>` such as `.dark { … }`) wins **regardless of import order**, and
+so does anything more specific. It does not matter whether you import
+`@askpanel/react/styles.css` from `main.tsx`, from the component, or via `@import`.
 
 ```css
+/* index.css — Tailwind v4 tokens, say */
+:root {
+  --askpanel-accent: var(--color-brand);
+  --askpanel-accent-fg: var(--color-brand-foreground);
+  --askpanel-font: var(--font-sans);
+  --askpanel-radius: var(--radius-lg);
+}
+
 /* class-based dark mode, e.g. a `.dark` on <html> toggled by the user */
-.dark .askpanel {
+.dark {
   --askpanel-bg: #111214;  --askpanel-fg: #ececec;  --askpanel-muted: #9a9a9a;
   --askpanel-border: #2a2b2f;  --askpanel-surface: #1b1c20;  --askpanel-user-bg: #1e2a44;
   --askpanel-error-bg: #3a1717;  --askpanel-error-fg: #ffb4b4;  --askpanel-scrim: rgba(0,0,0,.6);
@@ -191,9 +241,13 @@ Override on `:root`, on `.askpanel`, or via a `className`:
 ```
 
 ```css
-/* Tailwind theme tokens */
-.askpanel { --askpanel-accent: theme(colors.brand.DEFAULT); --askpanel-width: 28rem; }
+/* Tailwind v3 theme() tokens */
+:root { --askpanel-accent: theme(colors.brand.DEFAULT); --askpanel-width: 28rem; }
 ```
+
+Scoping the override to `.askpanel` (or your `className`) also works — an element's own
+declaration always beats an inherited one — but `:root` is the pattern the docs and
+tests promise.
 
 Every element has a stable `askpanel-*` class (`askpanel-aside`, `askpanel-msg-user`,
 `askpanel-button`, …) if you need to go further. The root carries
@@ -257,6 +311,29 @@ Details that matter:
 - Unmounting aborts any in-flight request.
 - `Prose` renders text only — paragraphs, `- ` bullets, `**bold**`. It never injects
   HTML, so model output is safe to render as-is.
+
+## Rendering stored escalations: `<AskPanelTranscript>`
+
+Your inbox / triage page gets the read-only view for free. Feed it the payload
+`on_escalate` received (a `model_dump()` of `EscalationPayload`, stored as JSON):
+
+```tsx
+import { AskPanelTranscript } from "@askpanel/react";
+import "@askpanel/react/styles.css";
+
+<AskPanelTranscript record={row.askpanel_payload} />               // collapsed conversation
+<AskPanelTranscript record={row.askpanel_payload} collapsed={false} hideTitle />
+```
+
+It renders the title, kind / mode / screen chips, the details (unless identical to the
+summary text), the structured summary with **mode-aware labels** (help: what they asked
+/ what the guide covered / still unanswered; interview: problem / current workaround /
+what done looks like; empty fields omitted), an "Answered by the guide" / "Already
+possible today" chip when `already_supported` is set, and the conversation in a
+`<details>` block using the panel's message bubbles and `Prose`. Labels come from
+`summary.mode` when present (0.1.3+) and `record.mode` otherwise. Every string is
+overridable via `labels` (see `defaultTranscriptLabels`); it uses the same
+`--askpanel-*` variables, so it matches the panel wherever you mount it.
 
 ## Just the client
 

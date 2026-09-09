@@ -28,7 +28,40 @@ echo "./vendor/askpanel-0.1.1-py3-none-any.whl" >> requirements.txt
 `pip install -r requirements.txt` resolves that path relative to the requirements file,
 and `COPY vendor/ vendor/` in the Dockerfile makes it available in the build. For local
 hacking use `pip install -e ../askpanel/python` in your venv and keep the wheel line for
-the image. Swap the line for `askpanel==0.1.1` once it's published.
+the image. Swap the line for `askpanel==0.1.3` once it's published.
+
+**`uv.lock` hosts** (`pyproject.toml` + `uv sync --frozen`): `uv add /path/to/checkout`
+records an absolute path in the lock, which won't exist inside the image. Vendor the
+wheel and add it by relative path — the lock then says `source = { path = "vendor/…" }`:
+
+```bash
+uv add ./vendor/askpanel-0.1.3-py3-none-any.whl
+```
+
+Because uv pins the exact wheel *path*, a version bump is remove-then-add, not
+drop-in-a-new-file:
+
+```bash
+uv remove askpanel && rm vendor/askpanel-0.1.2-*.whl
+uv add ./vendor/askpanel-0.1.3-py3-none-any.whl
+```
+
+And the wheel must be in the image **before** the sync layer, so the Dockerfile order is:
+
+```dockerfile
+COPY pyproject.toml uv.lock ./
+COPY vendor/ vendor/                 # ← before uv sync, after the lockfile
+RUN uv sync --frozen --no-dev
+COPY . .
+```
+
+Building the wheel: `uv build` in `python/` packages whatever is on disk, including
+uncommitted edits. To build exactly a tagged/committed version:
+
+```bash
+git -C /path/to/askpanel archive HEAD python | tar -x -C /tmp/askpanel-build
+(cd /tmp/askpanel-build/python && uv build)      # → dist/askpanel-<version>-py3-none-any.whl
+```
 
 ## Mount
 
@@ -144,12 +177,20 @@ and opening a session yourself, every host we've seen is covered. If you have a
 request-scoped dependency the sink truly needs, resolve it in `user_dependency` and hang
 it on the user object or `request.state`.
 
+**Storing it.** `payload.model_dump()` (or `model_dump_json()`) is the shape the React
+`<AskPanelTranscript record={…} />` component renders back, so store the whole payload
+in one JSONB column and your inbox view is a one-liner. `payload.summary.mode` says
+which mode's labels apply to a stored summary.
+
 **Triage hint.** `payload.summary.already_supported` (when a summary exists) is `True`
 when the product already does what was asked (interview) or the guide fully answered the
 question (help). Those are documentation gaps or questions, not feature requests —
 file them accordingly. `payload.summary.summary` and `payload.details` are plain text
-(`Label: sentence` paragraphs, no markdown emphasis) since 0.1.2; hosts that render
-details as plain text need no special handling.
+(`Label: sentence` paragraphs, no markdown emphasis) since 0.1.2. **Transcript turns
+are different**: assistant turns are the model's text exactly as the panel showed it —
+light markup (`**bold**`, `- ` bullets) that `Prose`/`<AskPanelTranscript>` render.
+Store them as-is (so the React component can render them); for plain-text display use
+`payload.transcript_text()` (strips the markup by default) or `askpanel.plain_text(str)`.
 
 **Title vs. details.** `payload.title` is always present (1–200 chars, user-edited;
 prefilled from the AI summary's title, or the first user message, or typed by the user
@@ -233,7 +274,30 @@ Both may be sync or async. The order for one request is: auth → `enabled` → 
   conversation mode. Token counts include cache reads, so you can watch caching engage.
   Errors in `on_turn` are logged and swallowed.
 
-A per-org daily cap is therefore: insert a row in `on_turn`, count rows in `quota`.
+A per-org daily cap is therefore: insert a row in `on_turn`, count rows in `quota` — or
+use the ready-made one:
+
+```python
+from askpanel import DailyTurnCap
+
+cap = DailyTurnCap(50, key=lambda u: u.org_id, message="Your team has used today's {limit} questions.")
+config = AskPanelConfig(..., quota=cap.quota, on_turn=cap.on_turn)
+```
+
+`DailyTurnCap(limit, *, key=default_key, message=…, counter=None, tz=UTC, count_failed=True)`
+counts model calls (`/chat` + `/summarize`) per key per day. `key` defaults to
+`user.id`, then `user.email`, then `str(user)`. The default counter is **in-memory and
+per process** — it resets on restart and is not shared between workers, so it is a
+best-effort guard, not an audit trail. For a shared/durable cap pass `counter=` with
+`get(key, day) -> int` and `incr(key, day)` (sync or async) over Redis or a table.
+`count_failed` decides whether a stream that died midway (`usage is None`) counts;
+default `True`, because the model was called. If you also log cost, wrap: `on_turn`
+can be your own function that calls `await cap.on_turn(user, mode, usage)` first.
+
+`on_turn` does not receive the message text (by design — the module never hands the
+conversation to anything but `on_escalate`). A cost row is `user`, `mode`,
+`usage.model`, and the four token counts; that is enough to see caching working
+(`cache_read_input_tokens` ≈ the corpus block on every turn after the first).
 
 Request caps are enforced before anything reaches the model: `max_messages` (40) and
 `max_message_chars` (4000). Lower them if your users don't need long conversations.
@@ -250,6 +314,24 @@ non-empty. When `False`:
 
 So a deployment without `ANTHROPIC_API_KEY` degrades to "plain feedback form" with no
 other change.
+
+**What "configured" means — and doesn't.** `enabled` never touches the network. For
+`AnthropicProvider`, configured means *a non-empty key string is present*; the key may
+be revoked and the model id may not exist, and you'd find out as a 503 on the first
+`/chat` while `/status` keeps saying `enabled: true`. Verify at startup instead:
+
+```python
+problems = config.verify()          # [] when fine; never called by the router
+if problems:
+    log.error("askpanel: %s", "; ".join(problems))
+```
+
+`verify()` checks the corpus is non-empty and, when the provider has `check()`, makes
+one free request (`models.retrieve`) that validates both the key and the model id.
+`AnthropicProvider.check()` returns `ProviderCheck(ok, model, error)` if you want it
+alone (a health endpoint, say). Pass the model id your product already validates
+(`AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY or None, model=settings.CLAUDE_MODEL)`)
+rather than relying on the package default.
 
 **Reading the flag from Python.** `config.enabled` is the property — the same value
 `/status` returns, so it can't drift from the package's definition. Keep the config in a
@@ -270,6 +352,13 @@ def me(user: User = Depends(current_user)):
 
 Then pass `skipStatus` to the panel if you'd rather it not probe `/status` itself
 (it still needs `/status` for starters, so most hosts leave the probe on).
+
+**No `/me`? Hosts whose SPA never re-fetches identity** (a JWT decoded client-side, one
+login response) don't need to smuggle the flag through login. The panel hides its own
+chat entries from `/status`; the place that actually needs the flag is the host's
+*trigger*, when it has a fallback (open the panel if enabled, else the old feedback
+form). The React package covers that with `useAskPanelStatus` / `onStatus` — see the
+react guide → "The trigger needs the flag too".
 
 To turn one mode off: `modes={"help"}`.
 

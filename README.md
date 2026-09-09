@@ -126,8 +126,25 @@ export function HelpButton({ currentTab }: { currentTab: string }) {
 }
 ```
 
-That's the whole integration. Theme it with `--askpanel-*` CSS variables, replace any
-string with `labels`, or drop the default UI and use the `useAskPanel` hook.
+That's the whole integration. Theme it with `--askpanel-*` CSS variables (set them on
+`:root`), replace any string with `labels`, or drop the default UI and use the
+`useAskPanel` hook.
+
+### What a host ends up writing
+
+The mount above is ~30 lines. The rest of a real integration, and what the package
+gives you for each:
+
+| Host code | Package help |
+|---|---|
+| Storing escalations (a column or table + `on_escalate`) | `payload.model_dump()` in one JSON column; `payload.as_text()` for a single text field |
+| Showing them in your inbox | `<AskPanelTranscript record={row.payload} />` |
+| A per-user daily cap | `DailyTurnCap(50)` as `quota` + `on_turn` |
+| Cost logging | `on_turn(user, mode, usage)` with token + cache counts |
+| A trigger that falls back when disabled | `useAskPanelStatus()` / `onStatus` |
+| Startup sanity (key, model id, corpus) | `config.verify()` |
+
+Two hosts so far landed at 100–180 lines of their own code plus a corpus and a migration.
 
 ## Try the demo
 

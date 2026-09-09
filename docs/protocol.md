@@ -75,8 +75,10 @@ Turns a transcript into a structured request. One non-streaming model call.
   "outcome": string,            // interview: what done looks like ("" if not said)
                                 // help:      what is still unanswered ("" if fully answered)
   "summary": string,            // the fields above rendered as plain text, ready to edit and submit
-  "already_supported"?: boolean // since 0.1.2 (additive): the product already does this /
-                                // the corpus fully answered it. Absent from older servers.
+  "already_supported"?: boolean, // since 0.1.2 (additive): the product already does this /
+                                 // the corpus fully answered it. Absent from older servers.
+  "mode"?: Mode                  // since 0.1.3 (additive): which mode produced it, so a stored
+                                 // summary can be labelled later. Absent from older servers.
 }
 ```
 
