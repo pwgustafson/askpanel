@@ -23,11 +23,18 @@ DEFAULT_MESSAGE = "You've used today's {limit} questions — try again tomorrow.
 
 
 class TurnCounter(Protocol):
-    """Storage for ``DailyTurnCap``. Methods may be sync or async."""
+    """Storage for ``DailyTurnCap``. Methods may be sync or async.
+
+    ``incr`` may declare extra keyword parameters ``usage`` (the ``Usage`` of the call,
+    or ``None`` for a stream that died) and ``mode``; the cap passes whichever the
+    signature accepts. A cost table can therefore *be* the counter: make ``incr`` the
+    insert (tokens and model from ``usage``) and ``get`` the count, and drop your own
+    ``on_turn``.
+    """
 
     def get(self, key: str, day: date) -> int | Any: ...
 
-    def incr(self, key: str, day: date) -> None | Any: ...
+    def incr(self, key: str, day: date, **kwargs: Any) -> None | Any: ...
 
 
 class MemoryCounter:
@@ -47,6 +54,17 @@ class MemoryCounter:
             stale = [k for k in self._counts if k[1] < day]
             for k in stale:
                 del self._counts[k]
+
+
+def _accepted_kwargs(fn: Callable[..., Any], candidates: dict[str, Any]) -> dict[str, Any]:
+    """The subset of ``candidates`` that ``fn``'s signature can take (by name or **kwargs)."""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return {}
+    if any(p.kind is p.VAR_KEYWORD for p in params.values()):
+        return dict(candidates)
+    return {k: v for k, v in candidates.items() if k in params}
 
 
 def default_key(user: Any) -> str:
@@ -93,8 +111,8 @@ class DailyTurnCap:
     def today(self) -> date:
         return datetime.now(self.tz).date()
 
-    async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
-        result = fn(*args)
+    async def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        result = fn(*args, **kwargs)
         if inspect.isawaitable(result):
             result = await result
         return result
@@ -113,10 +131,12 @@ class DailyTurnCap:
         return self.message.format(limit=self.limit)
 
     async def on_turn(self, user: Any, mode: str, usage: Usage | None) -> None:
-        """Pass as ``AskPanelConfig(on_turn=cap.on_turn)``. Chain your own logging after it."""
+        """Pass as ``AskPanelConfig(on_turn=cap.on_turn)``. Chain your own logging after it,
+        or let the counter's ``incr(key, day, usage=, mode=)`` be the single write."""
         if usage is None and not self.count_failed:
             return
-        await self._call(self.counter.incr, self.key(user), self.today())
+        extras = _accepted_kwargs(self.counter.incr, {"usage": usage, "mode": mode})
+        await self._call(self.counter.incr, self.key(user), self.today(), **extras)
 
     # Allow ``quota=cap`` directly as a convenience.
     async def __call__(self, user: Any, mode: str | None = None) -> bool | str:

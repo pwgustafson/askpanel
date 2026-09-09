@@ -295,6 +295,10 @@ def create_router(config: AskPanelConfig) -> APIRouter:
             raise _error(422, _detail(["mode"], f"mode {body.mode!r} is not enabled"))
         if not config.context_ok(body.context):
             raise _error(422, _detail(["context"], "unknown context"))
+        summary = body.summary
+        if summary is not None and summary.mode is None:
+            # A pre-0.1.3 panel or a non-React client: keep stored summaries self-describing.
+            summary = summary.model_copy(update={"mode": body.mode})
         payload = EscalationPayload(
             mode=body.mode,
             kind=body.kind,
@@ -302,7 +306,7 @@ def create_router(config: AskPanelConfig) -> APIRouter:
             details=body.details,
             transcript=body.messages,
             context=body.context,
-            summary=body.summary,
+            summary=summary,
         )
         kwargs = {"request": request} if escalate_takes_request else {}
         result = EscalationResult.coerce(

@@ -53,7 +53,7 @@ from .quota import DailyTurnCap, MemoryCounter
 from .router import QuotaExceeded, call_host, create_router
 from .sinks import github_issue, webhook
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 
 __all__ = [
     "__version__",

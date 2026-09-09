@@ -145,5 +145,12 @@ class AskPanelConfig:
             self.instructions_for(mode, conversation_mode),
         )
 
+    async def averify(self) -> list[str]:
+        """``verify()`` for async code (a FastAPI lifespan): runs it in a worker thread so
+        the provider round-trip never blocks the event loop."""
+        import asyncio
+
+        return await asyncio.to_thread(self.verify)
+
 
 __all__ = ["AskPanelConfig", "OnEscalate", "Quota", "OnTurn", "ContextValidator"]

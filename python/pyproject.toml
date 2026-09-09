@@ -1,6 +1,6 @@
 [project]
 name = "askpanel"
-version = "0.1.3"
+version = "0.1.4"
 description = "In-app help chat and guided feature requests, grounded only in a markdown corpus you write."
 readme = "README.md"
 license = { text = "MIT" }

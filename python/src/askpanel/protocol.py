@@ -245,8 +245,12 @@ class EscalationPayload(BaseModel):
 
     def as_text(self) -> str:
         """``title`` and ``details`` as one string, for hosts whose feedback store has a
-        single free-text field. The title is not repeated when ``details`` already
-        starts with it."""
+        single free-text field **and no title column**. The title is not repeated when
+        ``details`` already starts with it.
+
+        If you also keep the title (or store ``model_dump()`` for
+        ``<AskPanelTranscript>``), store ``details`` as-is instead — folding the title in
+        just makes it appear twice. ``split_text()`` reverses this helper."""
         details = self.details.strip()
         title = self.title.strip()
         if not details:
@@ -256,6 +260,15 @@ class EscalationPayload(BaseModel):
         ):
             return details
         return f"{title}\n\n{details}"
+
+    @staticmethod
+    def split_text(text: str) -> tuple[str, str]:
+        """Inverse of ``as_text()``: ``(title, details)`` from a stored single-field value."""
+        text = (text or "").strip()
+        if "\n\n" in text:
+            title, rest = text.split("\n\n", 1)
+            return title.strip(), rest.strip()
+        return text, ""
 
     def transcript_text(self, *, strip_markup: bool = True) -> str:
         """The transcript as ``User: …`` / ``Assistant: …`` blocks.
