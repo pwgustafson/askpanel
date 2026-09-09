@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { useAskPanel } from "../src/useAskPanel";
+import { clearAskPanelStatusCache, useAskPanel, useAskPanelStatus } from "../src/useAskPanel";
 import { STATUS, SUMMARY, frames, json, mockFetch, sse } from "./helpers";
 
 describe("useAskPanel", () => {
@@ -227,5 +227,39 @@ describe("useAskPanel", () => {
       details: "It broke",
       messages: [],
     });
+  });
+});
+
+describe("onStatus / onError / useAskPanelStatus", () => {
+  it("reports status and errors through callbacks", async () => {
+    const seen: unknown[] = [];
+    const errors: number[] = [];
+    let n = 0;
+    const fetch = mockFetch({
+      "/status": () => json(STATUS),
+      "/chat": () => (n++ === 0 ? json({ detail: "expired" }, { status: 401 }) : sse([frames({ type: "done" })])),
+    });
+    const { result } = renderHook(() =>
+      useAskPanel({ base: "/api/askpanel", fetch, onStatus: (s) => seen.push(s), onError: (e) => errors.push(e.status ?? 0) }),
+    );
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect((seen[0] as { enabled: boolean }).enabled).toBe(true);
+    act(() => result.current.open("help"));
+    await act(async () => {
+      await result.current.send("q");
+    });
+    expect(errors).toEqual([401]);
+  });
+
+  it("useAskPanelStatus probes once per base and shares the result", async () => {
+    clearAskPanelStatusCache();
+    const fetch = mockFetch({ "/status": () => json(STATUS) });
+    const a = renderHook(() => useAskPanelStatus({ base: "/api/askpanel", fetch }));
+    const b = renderHook(() => useAskPanelStatus({ base: "/api/askpanel", fetch }));
+    await waitFor(() => expect(a.result.current.enabled).toBe(true));
+    await waitFor(() => expect(b.result.current.enabled).toBe(true));
+    expect(fetch.calls).toHaveLength(1);
+    expect(a.result.current.status!.product_name).toBe("Orchard");
+    clearAskPanelStatusCache();
   });
 });

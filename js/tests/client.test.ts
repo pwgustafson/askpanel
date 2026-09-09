@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AskPanelError, createClient, readSSE } from "../src/client";
+import { AskPanelError, createClient, normalizeHeaders, readSSE } from "../src/client";
 import type { Frame } from "../src/types";
 import { frames, json, mockFetch, sse, sseBody, PROTO } from "./helpers";
 
@@ -140,5 +140,24 @@ describe("createClient", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer t");
     expect(init.credentials).toBe("include");
     expect(PROTO["X-AskPanel-Protocol"]).toBe("1");
+  });
+});
+
+describe("normalizeHeaders", () => {
+  it("accepts records with undefined values, Headers, and entries", () => {
+    const token: string | null = null;
+    expect(normalizeHeaders({ Authorization: token ? `Bearer ${token}` : undefined, "X-A": 1 })).toEqual({ "X-A": "1" });
+    expect(normalizeHeaders(new Headers({ "X-B": "b" }))).toEqual({ "x-b": "b" });
+    expect(normalizeHeaders([["X-C", "c"]])).toEqual({ "X-C": "c" });
+    expect(normalizeHeaders(undefined)).toEqual({});
+  });
+
+  it("client drops empty header values from a function", async () => {
+    const fetch = mockFetch({ "/status": () => json({ enabled: true }) });
+    const client = createClient({ base: "/b", fetch, headers: () => ({ Authorization: undefined, "X-Y": "z" }) });
+    await client.status();
+    const h = fetch.calls[0]!.init!.headers as Record<string, string>;
+    expect(h["X-Y"]).toBe("z");
+    expect("Authorization" in h).toBe(false);
   });
 });

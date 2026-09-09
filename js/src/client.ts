@@ -34,13 +34,34 @@ export class AskPanelError extends Error {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** `HeadersInit`, plus records whose values may be undefined/null (dropped). */
+export type HeadersInput = HeadersInit | Record<string, string | number | undefined | null>;
+
+/** Normalise any `HeadersInput` to a plain record, dropping empty values. */
+export function normalizeHeaders(input: HeadersInput | undefined | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!input) return out;
+  if (typeof Headers !== "undefined" && input instanceof Headers) {
+    input.forEach((v, k) => (out[k] = v));
+    return out;
+  }
+  if (Array.isArray(input)) {
+    for (const [k, v] of input) if (v !== undefined && v !== null) out[k] = String(v);
+    return out;
+  }
+  for (const [k, v] of Object.entries(input)) if (v !== undefined && v !== null) out[k] = String(v);
+  return out;
+}
+
 export interface ClientOptions {
   /** Base path of the mounted router, e.g. `/api/askpanel`. No trailing slash. */
   base: string;
   /** Substitute fetch (tests, custom auth wrappers). Defaults to `globalThis.fetch`. */
   fetch?: FetchLike;
-  /** Extra headers on every request (e.g. an Authorization header). */
-  headers?: Record<string, string> | (() => Record<string, string>);
+  /** Extra headers on every request (e.g. an Authorization header). Any `HeadersInit`
+   *  (record, `Headers`, or entries), or a function returning one; `undefined`/`null`
+   *  values are dropped, so `{ Authorization: token ? `Bearer ${token}` : undefined }` is fine. */
+  headers?: HeadersInput | (() => HeadersInput | undefined | null);
   /** Passed straight to fetch. Default `"same-origin"`. */
   credentials?: RequestCredentials;
   /** Called when the server answers with a protocol version this client does not speak. */
@@ -159,7 +180,7 @@ export function createClient(options: ClientOptions): AskPanelClient {
 
   const headers = (): Record<string, string> => ({
     Accept: "application/json",
-    ...(typeof options.headers === "function" ? options.headers() : options.headers ?? {}),
+    ...normalizeHeaders(typeof options.headers === "function" ? options.headers() : options.headers),
   });
 
   const request = async (path: string, init: RequestInit): Promise<Response> => {

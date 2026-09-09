@@ -29,6 +29,20 @@ export interface SummaryOut {
   /** Protocol 1 (additive, since server 0.1.2): the product already does this / the docs
    *  fully answered it. Absent from older servers. */
   already_supported?: boolean;
+  /** Since server 0.1.3 (additive): which mode the summary was produced for, so a stored
+   *  summary can be labelled later. Absent from older servers. */
+  mode?: Mode;
+}
+
+/** A stored escalation, as the host's `on_escalate` received it (docs/protocol.md). */
+export interface EscalationRecord {
+  mode: Mode;
+  kind: Kind;
+  title: string;
+  details: string;
+  transcript: Message[];
+  context?: string | null;
+  summary?: SummaryOut | null;
 }
 
 export interface ChatRequest {

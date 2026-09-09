@@ -39,6 +39,10 @@ jobs:
           cache: npm
           cache-dependency-path: js/package-lock.json
       - run: npm ci
+      - name: Lockfile is in step with package.json (npm ci refuses otherwise)
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          git diff --exit-code -- package-lock.json
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

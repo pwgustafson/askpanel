@@ -1,7 +1,9 @@
 /* AskPanel default styles. Every colour, size, and font is a --askpanel-* custom
-   property; override them on :root or on the .askpanel element. No other CSS is needed. */
+   property. The defaults are declared on :where(:root) — zero specificity, on the root —
+   so ANY host rule wins regardless of import order:  :root { --askpanel-accent: … }
+   (or .dark { … } for a class-based theme). No other CSS is needed. */
 
-.askpanel {
+:where(:root) {
   --askpanel-bg: #ffffff;
   --askpanel-fg: #1a1a1a;
   --askpanel-muted: #6b6b6b;
@@ -19,7 +21,9 @@
   --askpanel-font-size: 14px;
   --askpanel-z: 1000;
   --askpanel-shadow: -8px 0 30px rgba(0, 0, 0, 0.12);
+}
 
+.askpanel {
   position: fixed;
   inset: 0;
   z-index: var(--askpanel-z);
@@ -353,4 +357,94 @@
   .askpanel-aside {
     width: 100vw;
   }
+}
+
+/* ---- <AskPanelTranscript>: read-only view of a stored escalation ------------------- */
+
+.askpanel-transcript {
+  font-family: var(--askpanel-font);
+  font-size: var(--askpanel-font-size);
+  color: var(--askpanel-fg);
+  line-height: 1.45;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.askpanel-transcript *,
+.askpanel-transcript *::before,
+.askpanel-transcript *::after {
+  box-sizing: border-box;
+}
+
+.askpanel-transcript-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.askpanel-transcript-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  flex: 1 1 100%;
+}
+
+.askpanel-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--askpanel-border);
+  background: var(--askpanel-surface);
+  color: var(--askpanel-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.askpanel-chip-supported {
+  border-color: var(--askpanel-accent);
+  color: var(--askpanel-accent);
+  background: var(--askpanel-user-bg);
+}
+
+.askpanel-transcript-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.askpanel-transcript-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--askpanel-muted);
+}
+
+.askpanel-transcript-details {
+  border: 1px solid var(--askpanel-border);
+  border-radius: var(--askpanel-radius);
+  padding: 0 12px;
+}
+
+.askpanel-transcript-details > summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 600;
+  color: var(--askpanel-muted);
+  list-style: revert;
+}
+
+.askpanel-transcript-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 12px;
+}
+
+.askpanel-transcript-log .askpanel-msg {
+  max-width: 100%;
 }

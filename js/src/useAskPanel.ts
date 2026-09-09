@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AskPanelError, createClient, type AskPanelClient, type FetchLike } from "./client";
+import { AskPanelError, createClient, type AskPanelClient, type FetchLike, type HeadersInput } from "./client";
 import type { EscalateResult, Kind, Message, Mode, StatusOut, SummaryOut } from "./types";
 
 export interface UseAskPanelOptions {
@@ -11,8 +11,9 @@ export interface UseAskPanelOptions {
   protocolMismatch?: (serverVersion: string) => void;
   /** Substitute fetch (tests, auth wrappers). */
   fetch?: FetchLike;
-  /** Extra headers on every request. */
-  headers?: Record<string, string> | (() => Record<string, string>);
+  /** Extra headers on every request: any `HeadersInit` (or a record with possibly-undefined
+   *  values, which are dropped), or a function returning one — read on every request. */
+  headers?: HeadersInput | (() => HeadersInput | undefined | null);
   /** Passed to fetch. Default `"same-origin"`. */
   credentials?: RequestCredentials;
   /** Skip the `/status` probe on mount (e.g. the host already knows the flag). */
@@ -20,6 +21,12 @@ export interface UseAskPanelOptions {
   /** What to assume for `enabled` while `status` is null — pair with `skipStatus` when
    *  the host learned the flag elsewhere (e.g. its own `/me`). Ignored once `/status` answers. */
   enabled?: boolean;
+  /** Called with the `/status` result whenever the probe succeeds — lets a trigger learn
+   *  `enabled` from the probe the panel already pays for. */
+  onStatus?: (status: StatusOut) => void;
+  /** Called for every error the hook surfaces (probe, chat, summarize, escalate), before it
+   *  lands in `error`/`statusError`. Use it to redirect on `error.status === 401`. */
+  onError?: (error: AskPanelError) => void;
 }
 
 export interface EscalateInput {
@@ -96,7 +103,17 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
     credentials,
     skipStatus,
     enabled: assumeEnabled,
+    onStatus,
+    onError,
   } = options;
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const report = useCallback((e: AskPanelError): AskPanelError => {
+    onErrorRef.current?.(e);
+    return e;
+  }, []);
 
   const client = useMemo(
     () => createClient({ base, fetch: fetchImpl, headers, credentials, onProtocolMismatch: protocolMismatch }),
@@ -140,14 +157,15 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
       if (!mountedRef.current) return;
       setStatus(s);
       setStatusError(null);
+      onStatusRef.current?.(s);
     } catch (e) {
       if (!mountedRef.current) return;
       const err = toError(e);
       if (err.code === "aborted") return;
-      setStatusError(err);
+      setStatusError(report(err));
       setStatus(null);
     }
-  }, [client]);
+  }, [client, report]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -249,7 +267,7 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
           setMessages(committed);
         }
         if (result.status === "error" || result.status === "closed") {
-          setError(new AskPanelError(result.error ?? "The reply was cut short", "network"));
+          setError(report(new AskPanelError(result.error ?? "The reply was cut short", "network")));
         }
       } catch (e) {
         if (!mountedRef.current) return;
@@ -261,7 +279,7 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
             setMessages(committed);
           }
         } else {
-          setError(err);
+          setError(report(err));
         }
       } finally {
         if (mountedRef.current && abortRef.current === controller) {
@@ -280,7 +298,7 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
         }
       }
     },
-    [abortCurrent, client],
+    [abortCurrent, client, report],
   );
 
   const summarize = useCallback(async (): Promise<SummaryOut | null> => {
@@ -300,12 +318,12 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
       return s;
     } catch (e) {
       if (!mountedRef.current) return null;
-      setError(toError(e));
+      setError(report(toError(e)));
       return null;
     } finally {
       if (mountedRef.current) setSummarizing(false);
     }
-  }, [client]);
+  }, [client, report]);
 
   const escalate = useCallback(
     async (input: EscalateInput): Promise<EscalateResult | null> => {
@@ -325,20 +343,22 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
         });
         if (!mountedRef.current) return null;
         if (!result.ok) {
-          setError(new AskPanelError(result.message ?? "The team could not receive this right now", "http"));
+          setError(
+            report(new AskPanelError(result.message ?? "The team could not receive this right now", "http")),
+          );
           return result;
         }
         setSent(result);
         return result;
       } catch (e) {
         if (!mountedRef.current) return null;
-        setError(toError(e));
+        setError(report(toError(e)));
         return null;
       } finally {
         if (mountedRef.current) setEscalating(false);
       }
     },
-    [client, summary],
+    [client, summary, report],
   );
 
   const starters = useMemo(() => {
@@ -373,4 +393,84 @@ export function useAskPanel(options: UseAskPanelOptions): UseAskPanel {
     refreshStatus,
     client,
   };
+}
+
+export interface UseAskPanelStatusOptions {
+  base: string;
+  fetch?: FetchLike;
+  headers?: HeadersInput | (() => HeadersInput | undefined | null);
+  credentials?: RequestCredentials;
+  protocolMismatch?: (serverVersion: string) => void;
+}
+
+export interface AskPanelStatusResult {
+  status: StatusOut | null;
+  /** `status?.enabled ?? false`; false while loading or on error. */
+  enabled: boolean;
+  loading: boolean;
+  error: AskPanelError | null;
+  refresh: () => Promise<void>;
+}
+
+/**
+ * Probe `GET {base}/status` once for a *trigger* that needs the flag before the panel is
+ * mounted — e.g. a button that opens the panel when enabled and a legacy form otherwise.
+ * Results are memoised per `base` for the life of the page, so a trigger and a panel
+ * that both probe cost one request.
+ */
+export function useAskPanelStatus(options: UseAskPanelStatusOptions): AskPanelStatusResult {
+  const { base, fetch: fetchImpl, headers, credentials, protocolMismatch } = options;
+  const client = useMemo(
+    () => createClient({ base, fetch: fetchImpl, headers, credentials, onProtocolMismatch: protocolMismatch }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [base, fetchImpl, credentials],
+  );
+  const cached = statusCache.get(base);
+  const [status, setStatus] = useState<StatusOut | null>(cached ?? null);
+  const [error, setError] = useState<AskPanelError | null>(null);
+  const [loading, setLoading] = useState(!cached);
+  const mounted = useRef(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    let promise = statusInflight.get(base);
+    if (!promise) {
+      promise = client.status().then((s) => {
+        statusCache.set(base, s);
+        return s;
+      });
+      statusInflight.set(base, promise);
+      promise.finally(() => statusInflight.delete(base)).catch(() => {});
+    }
+    try {
+      const s = await promise;
+      if (!mounted.current) return;
+      setStatus(s);
+      setError(null);
+    } catch (e) {
+      if (!mounted.current) return;
+      setError(toError(e));
+    } finally {
+      if (mounted.current) setLoading(false);
+    }
+  }, [base, client]);
+
+  useEffect(() => {
+    mounted.current = true;
+    if (!statusCache.has(base)) void refresh();
+    return () => {
+      mounted.current = false;
+    };
+  }, [base, refresh]);
+
+  return { status, enabled: status?.enabled ?? false, loading, error, refresh };
+}
+
+const statusCache = new Map<string, StatusOut>();
+const statusInflight = new Map<string, Promise<StatusOut>>();
+
+/** Forget memoised `/status` results (tests; after login/logout). */
+export function clearAskPanelStatusCache(): void {
+  statusCache.clear();
+  statusInflight.clear();
 }
