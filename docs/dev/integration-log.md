@@ -5,6 +5,11 @@ built. Integrators append an entry for every friction point — an unclear doc, 
 option, a wrong default, a bug — written the way an external customer would file it.
 The builder answers in place and marks the status. Newest at the bottom.
 
+> **Numbering note (2026-09-09):** Drovio (`07d2d19`) and GiveWise (`42fcffa`) both filed
+> entries as AP-31/AP-32 in parallel. Drovio's kept their numbers (pushed first); GiveWise's
+> AP-31..34 were renumbered to **AP-33..36** so every entry is unique. AP-32 (Drovio) and
+> AP-33 (GiveWise) ask for the same change and are answered together.
+
 Format:
 
 ```
@@ -318,53 +323,54 @@ Format:
 
 ## AP-31 — `payload.as_text()` and `<AskPanelTranscript>` don't compose: the details-equals-summary check misses when the title was folded in
 - **From:** drovio  **Date:** 2026-09-08  **Area:** react | python | docs
-- **Status:** open
+- **Status:** fixed (v0.1.4)
 - **What I tried:** Followed both recommendations at once: the sink stores `details = payload.as_text()` (AP-2, single free-text column), and the triage page feeds the row to `<AskPanelTranscript record={…}>` (0.1.3) with `details` = that column and `summary` = the stored summary.
 - **What happened / what was unclear:** The component omits `details` "unless identical to the summary text", but `as_text()` output is `title + "\n\n" + summary text`, so it is never identical and the row showed the summary three times (title line, DETAILS block, the labelled fields). I now split the first paragraph back off as `title` and pass the remainder as `details`, which makes the dedup fire — but that is host code undoing a package helper.
 - **What I expected:** The component to treat `details` that *start with* `title` (or the `as_text()` form) as the same text, or an `EscalationRecord.fromText(details)` / a documented note in "Storing it" that hosts on the single-column path should keep `title` separately (or store `payload.model_dump()` instead of `as_text()`, which the 0.1.3 docs now recommend — say explicitly that the two recipes are alternatives).
-- **Builder:**
+- **Builder:** Both halves. The component now ignores a leading paragraph equal to the title (the `as_text()` form, or the `**title**` line older summaries carried) when comparing `details` to the summary text — `stripLeadingTitle()` is exported if you want the same rule elsewhere — so a row stored via `as_text()` no longer shows the summary three times, and your split-back code can go. And the docs now say plainly that the two recipes are alternatives (fastapi guide → "Title vs. details — two recipes, pick one"): keep the title (column or `model_dump()`) ⇒ store `details` as-is, never `as_text()`; single text field with no title column ⇒ `as_text()`, and `EscalationPayload.split_text()` reverses it. The 0.1.2 docs recommending both at once was the bug.
+
 
 ## AP-32 — `/escalate` does not stamp `summary.mode` when the client-supplied summary lacks it
 - **From:** drovio  **Date:** 2026-09-08  **Area:** python | protocol
-- **Status:** open
+- **Status:** fixed (v0.1.4)
 - **What I tried:** After dropping my own mode-merge (AP-27 says the server sets `SummaryOut.mode`), a test that POSTs `/escalate` with a hand-built `summary` (no `mode`) stored `summary.mode = None`.
 - **What happened / what was unclear:** `/summarize` stamps `mode`, and the React panel sends that object back verbatim, so the real flow is fine; but the escalate body's `summary` is client input, and a 0.1.2 panel (or any other client) produces a summary without `mode`, which then isn't self-describing in the store.
 - **What I expected:** `/escalate` to default `summary.mode` to the request's `mode` when it is missing, so every stored summary carries it regardless of which client sent it. One line, additive.
-- **Builder:**
+- **Builder:** Done, one line and additive: `/escalate` fills `summary.mode` from the request's `mode` when the client's summary lacks it (a client-supplied mode is kept as sent). Same ask as GiveWise's AP-33. Payload table updated to say `mode` is always set. Thanks for the line count — 274 with the inbox at 16 lines is the number I'll give the owner.
 - **Integrator (givewise):** confirmed — host code is now **274 added lines** (was 354): `app/askpanel.py` 130 (config, sink, cap, cost row, `verify_at_startup`), migration 31, model/serializer/router 8, `main.py` 3; frontend `FeedbackButton` 59, `FeedbackInbox` 16 (was 79 — `<AskPanelTranscript record={item.askpanel_payload} />`), `index.css` 18, `client.ts` 4, `AuthContext` 3, Dockerfile 2. Switched to the single `askpanel_payload` JSONB column the guide now recommends.
 
 
-## AP-31 — `payload.summary.mode` on `/escalate` is only what the client echoed back
+## AP-33 — `payload.summary.mode` on `/escalate` is only what the client echoed back
 - **From:** givewise  **Date:** 2026-09-09  **Area:** python | docs
-- **Status:** open
+- **Status:** fixed (v0.1.4)
 - **What I tried:** A host test posting `/escalate` with a `summary` object that omits `mode` (the shape a non-React or older client would send).
 - **What happened / what was unclear:** `payload.summary.mode` arrived as `None`; the router does not fill it from `payload.mode`. The docs say the server sets it on `/summarize` and it "rides through `/escalate`", which is true for the 0.1.3 panel but not for anything else that talks the protocol. `<AskPanelTranscript>` falls back to `record.mode`, so the inbox is fine; a stored row is just less self-describing than the docs promise.
 - **What I expected:** The server to default `summary.mode` to `payload.mode` when the client leaves it out (additive, no wire change), or the payload table to say "when the client sends it".
-- **Builder:**
+- **Builder:** Same change as AP-32 (Drovio filed it in parallel): the server now defaults `summary.mode` to `payload.mode` on `/escalate`, so a stored row is exactly as self-describing as the docs promised regardless of which client sent it. `<AskPanelTranscript>` keeps its `record.mode` fallback for rows stored before 0.1.4.
 
 
-## AP-32 — `/status` is probed more than once per page: the trigger's `useAskPanelStatus` memo and the mounted panel's own probe don't share
+## AP-34 — `/status` is probed more than once per page: the trigger's `useAskPanelStatus` memo and the mounted panel's own probe don't share
 - **From:** givewise  **Date:** 2026-09-09  **Area:** react | docs
-- **Status:** open
+- **Status:** fixed (v0.1.4)
 - **What I tried:** `FeedbackButton` calls `useAskPanelStatus({ base, headers })` and, when enabled, mounts `<AskPanel base=… headers=…>` (probe left on, for starters). Counted `/status` entries in `performance.getEntriesByType("resource")` after load.
 - **What happened / what was unclear:** Three GETs on a dev page load. GiveWise runs React StrictMode in dev, which double-invokes effects, so the number is inflated — but the react guide's "the trigger and the panel between them cost one `/status` request" reads as if `useAskPanel`'s mount probe reuses the `useAskPanelStatus` memo, and I can't tell from the docs whether it does. If it doesn't, every enabled page pays two probes (hook + panel) in production.
 - **What I expected:** Either `useAskPanel` reading from / populating the same per-`base` memo, or the doc sentence narrowed to "one request if you also pass `skipStatus enabled={enabled}` to the panel (and give up starters)".
-- **Builder:**
+- **Builder:** It didn't share, and the sentence over-promised. In 0.1.4 `useAskPanel` (the panel's own probe) and `useAskPanelStatus` read and fill the same per-`base` memo, with in-flight dedup, so a trigger plus a mounted panel — and StrictMode's doubled effects — cost one `/status` per page load, starters included. `refreshStatus()`/`refresh()` bypass the memo on purpose; `clearAskPanelStatusCache()` after login/logout. A test mounts the status hook and two panel hooks against a counting fetch and asserts one request. Guide sentence rewritten to say exactly this.
 
 
-## AP-33 — A durable `DailyTurnCap` counter and a cost row are the same write, but `counter.incr(key, day)` can't carry `usage`
+## AP-35 — A durable `DailyTurnCap` counter and a cost row are the same write, but `counter.incr(key, day)` can't carry `usage`
 - **From:** givewise  **Date:** 2026-09-09  **Area:** python
-- **Status:** open
+- **Status:** fixed (v0.1.4)
 - **What I tried:** Considered backing the cap with `prompt_logs` (which `on_turn` already writes with tokens/model) via `counter=`.
 - **What happened / what was unclear:** `incr(key, day)` has no room for the `Usage`, so a `prompt_logs`-backed counter would write a token-less row from `incr` *and* the real cost row from my `on_turn` — two rows per turn — or `incr` would have to be a no-op that trusts `on_turn` to insert first (fragile ordering). I kept `MemoryCounter` and documented best-effort instead.
 - **What I expected:** `incr(key, day, usage=None)` (extra optional argument, ignored by `MemoryCounter`) so a host's audit table can be the counter, and a sentence in the guide: "if your cost table is the counter, make `incr` the insert and drop your own `on_turn`".
-- **Builder:**
+- **Builder:** `DailyTurnCap` now inspects the counter's `incr` signature and passes `usage=` and/or `mode=` when it accepts them (a 0.1.3-style `incr(key, day)` still works). So `prompt_logs` can be the counter: `incr(key, day, usage=None, mode=None)` is the insert with model and token counts, `get` is the count, and you drop your own `on_turn` — one row per turn, no ordering games. The fastapi guide has that `PromptLogCounter` example under "Quota and cost", with the exact sentence you asked for.
 
 
-## AP-34 — `config.verify()` is synchronous and does network; the docs' bare call blocks an async lifespan
+## AP-36 — `config.verify()` is synchronous and does network; the docs' bare call blocks an async lifespan
 - **From:** givewise  **Date:** 2026-09-09  **Area:** python | docs
-- **Status:** open
+- **Status:** fixed (v0.1.4)
 - **What I tried:** fastapi guide → "What configured means": `problems = config.verify()` "at startup". GiveWise's startup is an `async` FastAPI lifespan.
 - **What happened / what was unclear:** `verify()` makes a blocking `models.retrieve` call; called directly inside the lifespan it stalls the loop for the round trip (and would hang startup if the API were unreachable and the client timeout long). I wrapped it in `asyncio.to_thread` and a try/except so the help panel can never block the app from booting. Worked: `askpanel_ready corpus_chars=14804` / `askpanel_not_ready problems=[…]` in the startup log.
 - **What I expected:** Either an `async def averify()` twin, or the doc example showing the lifespan form (`await asyncio.to_thread(config.verify)`) with a note that a failure must not block startup.
-- **Builder:**
+- **Builder:** `await config.averify()` added — `verify()` in a worker thread — and the guide's example is now the lifespan form you wrote, try/except included, with the note that a failure must never block boot (`askpanel_not_ready problems=[…]` and carry on). `verify()` is documented as "synchronous, does network" for sync startup code.
