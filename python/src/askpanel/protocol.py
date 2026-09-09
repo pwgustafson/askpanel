@@ -145,6 +145,10 @@ class SummaryOut(BaseModel):
     #: True when the product already does what was asked and the assistant showed how
     #: (interview), or the documentation fully answered the question (help).
     already_supported: bool = False
+    #: The conversation mode the summary was produced for, so a stored summary can be
+    #: labelled later (help: asked / covered / unanswered; interview: problem /
+    #: workaround / outcome). Set by the server; ``None`` from pre-0.1.3 servers.
+    mode: Mode | None = None
 
     @field_validator("problem", "workaround", "outcome", mode="before")
     @classmethod
@@ -154,7 +158,7 @@ class SummaryOut(BaseModel):
     @model_validator(mode="after")
     def _fill_summary(self) -> SummaryOut:
         if not self.summary:
-            self.summary = render_summary_text(self, "interview")
+            self.summary = render_summary_text(self, self.mode or "interview")
         return self
 
 
@@ -253,12 +257,31 @@ class EscalationPayload(BaseModel):
             return details
         return f"{title}\n\n{details}"
 
-    def transcript_text(self) -> str:
-        """The transcript as ``User: …`` / ``Assistant: …`` lines."""
+    def transcript_text(self, *, strip_markup: bool = True) -> str:
+        """The transcript as ``User: …`` / ``Assistant: …`` blocks.
+
+        Assistant turns are the model's text as the panel showed it — light markup
+        (``**bold**``, ``- `` bullets) that the React ``Prose`` renders. By default
+        ``plain_text()`` strips it for hosts that display the transcript as text;
+        pass ``strip_markup=False`` to keep it verbatim.
+        """
         return "\n\n".join(
-            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content.strip()}"
+            f"{'User' if m.role == 'user' else 'Assistant'}: "
+            f"{plain_text(m.content) if strip_markup else m.content.strip()}"
             for m in self.transcript
         )
+
+
+_BOLD = re.compile(r"\*\*([^*\n]+)\*\*")
+_BULLET = re.compile(r"^(\s*)[-*•]\s+", re.M)
+
+
+def plain_text(text: str) -> str:
+    """Strip the panel's light markup (``**bold**`` → bold, ``- ``/``* `` bullets → ``• ``)
+    for plain-text display. Mirrors what the React ``Prose`` component renders."""
+    out = _BOLD.sub(r"\1", text or "")
+    out = _BULLET.sub(r"\1• ", out)
+    return out.strip()
 
 
 class EscalationResult(BaseModel):
@@ -363,4 +386,5 @@ __all__ = [
     "render_summary_text",
     "render_summary_markdown",
     "is_placeholder",
+    "plain_text",
 ]

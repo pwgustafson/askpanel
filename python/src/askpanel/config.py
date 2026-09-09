@@ -82,8 +82,31 @@ class AskPanelConfig:
 
     @property
     def enabled(self) -> bool:
-        """Provider configured AND corpus non-empty. Drives ``/status`` and the 503s."""
+        """Provider configured AND corpus non-empty. Drives ``/status`` and the 503s.
+
+        "Configured" means credentials are *present*, not valid: no network is touched.
+        Use ``verify()`` at startup to find a revoked key or a wrong model id.
+        """
         return bool(self.corpus_text) and provider_configured(self.provider)
+
+    def verify(self) -> list[str]:
+        """Check the parts of the configuration that ``enabled`` cannot: an empty corpus,
+        and — when the provider offers ``check()`` — the key and model id, with one
+        free request. Returns a list of problems (empty means everything is fine).
+        Never called by the router; call it at startup, in a health check, or a test."""
+        problems: list[str] = []
+        if not self.corpus_text:
+            problems.append("corpus is empty")
+        if not provider_configured(self.provider):
+            problems.append("provider has no credentials (ANTHROPIC_API_KEY or api_key=)")
+        elif hasattr(self.provider, "check"):
+            result = self.provider.check()
+            if not getattr(result, "ok", False):
+                problems.append(
+                    f"provider check failed for model {getattr(result, 'model', '?')}: "
+                    f"{getattr(result, 'error', 'unknown error')}"
+                )
+        return problems
 
     def context_ok(self, context: str | None) -> bool:
         """Is this ``context`` acceptable? ``None`` always is."""

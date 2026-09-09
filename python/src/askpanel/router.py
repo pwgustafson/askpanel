@@ -134,6 +134,7 @@ def parse_summary(text: str, mode: str = "interview") -> SummaryOut:
             data["title"] = str(data.get("title") or "Untitled request")[:120]
             data["already_supported"] = _truthy(data.get("already_supported", False))
             data.pop("summary", None)
+            data["mode"] = mode
             try:
                 out = SummaryOut.model_validate(data)
             except ValidationError:
@@ -141,7 +142,7 @@ def parse_summary(text: str, mode: str = "interview") -> SummaryOut:
             out.summary = render_summary_text(out, mode)
             return out
     first_line = next((ln.strip() for ln in cleaned.splitlines() if ln.strip()), "Untitled request")
-    return SummaryOut(title=first_line[:120], problem=cleaned, summary=cleaned)
+    return SummaryOut(title=first_line[:120], problem=cleaned, summary=cleaned, mode=mode)  # type: ignore[arg-type]
 
 
 def _truthy(v: Any) -> bool:

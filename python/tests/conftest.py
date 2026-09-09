@@ -71,3 +71,6 @@ def frames(response) -> list[dict]:
         if block.startswith("data: "):
             out.append(json.loads(block[len("data: ") :]))
     return out
+
+
+U = {"role": "user", "content": "hi"}

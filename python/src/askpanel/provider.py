@@ -33,6 +33,15 @@ class Usage:
     cache_creation_input_tokens: int | None = None
 
 
+@dataclass
+class ProviderCheck:
+    """Result of ``provider.check()``: a real round-trip to the provider (no tokens billed)."""
+
+    ok: bool
+    model: str | None = None
+    error: str | None = None
+
+
 class ProviderCall(NamedTuple):
     """One recorded ``StubProvider`` call. Unpacks as ``op, system_blocks, messages``."""
 
@@ -94,7 +103,20 @@ class AnthropicProvider:
 
     @property
     def configured(self) -> bool:
+        """A non-empty API key (or an injected client) is present. Nothing is validated:
+        the key may be revoked and the model id may not exist — call ``check()`` for that."""
         return bool(self.api_key) or self._client is not None
+
+    def check(self) -> ProviderCheck:
+        """Verify the key and model id with one free request (``models.retrieve``).
+        Never called by the router; run it at startup or from a health check."""
+        if not self.configured:
+            return ProviderCheck(ok=False, model=self.model, error="no API key")
+        try:
+            info = self._get_client().models.retrieve(self.model)
+        except Exception as exc:  # noqa: BLE001 — any failure is the answer
+            return ProviderCheck(ok=False, model=self.model, error=str(exc))
+        return ProviderCheck(ok=True, model=getattr(info, "id", None) or self.model)
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -185,6 +207,9 @@ class StubProvider:
         self.usage = usage
         self.calls: list[ProviderCall] = []
 
+    def check(self) -> ProviderCheck:
+        return ProviderCheck(ok=not self.fail_before_first, model="stub", error=None)
+
     def stream(self, system_blocks: Sequence[dict], messages: Sequence[dict]) -> Iterator[str]:
         self.calls.append(ProviderCall("stream", list(system_blocks), list(messages)))
         if self.fail_before_first:
@@ -214,6 +239,7 @@ __all__ = [
     "Usage",
     "Provider",
     "ProviderCall",
+    "ProviderCheck",
     "ProviderError",
     "AnthropicProvider",
     "StubProvider",

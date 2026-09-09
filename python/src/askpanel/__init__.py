@@ -38,12 +38,22 @@ from .protocol import (
     StatusOut,
     SummarizeRequest,
     SummaryOut,
+    plain_text,
 )
-from .provider import AnthropicProvider, Provider, ProviderCall, ProviderError, StubProvider, Usage
+from .provider import (
+    AnthropicProvider,
+    Provider,
+    ProviderCall,
+    ProviderCheck,
+    ProviderError,
+    StubProvider,
+    Usage,
+)
+from .quota import DailyTurnCap, MemoryCounter
 from .router import QuotaExceeded, call_host, create_router
 from .sinks import github_issue, webhook
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = [
     "__version__",
@@ -77,7 +87,11 @@ __all__ = [
     # providers
     "Provider",
     "ProviderCall",
+    "ProviderCheck",
     "ProviderError",
+    "DailyTurnCap",
+    "MemoryCounter",
+    "plain_text",
     "AnthropicProvider",
     "StubProvider",
     "Usage",
