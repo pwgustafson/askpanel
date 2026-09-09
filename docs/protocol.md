@@ -67,13 +67,24 @@ Turns a transcript into a structured request. One non-streaming model call.
 { "mode": Mode, "messages": [Message, ...], "context"?: Context }
 
 200 {
-  "title": string,        // ≤ 120 chars
-  "problem": string,      // what the user is trying to do and what gets in the way
-  "workaround": string,   // what they do today; "" if none was mentioned
-  "outcome": string,      // what done looks like
-  "summary": string       // the four above as markdown, ready to edit and submit
+  "title": string,              // ≤ 120 chars
+  "problem": string,            // interview: what they're trying to do and what gets in the way
+                                // help:      what they asked and what they were trying to do
+  "workaround": string,         // interview: what they do today ("" if none was mentioned)
+                                // help:      what the assistant could answer from the corpus
+  "outcome": string,            // interview: what done looks like ("" if not said)
+                                // help:      what is still unanswered ("" if fully answered)
+  "summary": string,            // the fields above rendered as plain text, ready to edit and submit
+  "already_supported"?: boolean // since 0.1.2 (additive): the product already does this /
+                                // the corpus fully answered it. Absent from older servers.
 }
 ```
+
+The three text fields keep their names in both modes; only their meaning shifts with
+`mode`, as annotated. `summary` is **plain text** — `Label: sentence` paragraphs
+separated by blank lines, no markdown emphasis, empty sections omitted — because hosts
+store and display it verbatim. Text fields are `""`, never placeholder words like
+"not specified", when nothing was said.
 
 Same HTTP error rules as `/chat`. The messages here may end with an `assistant`
 turn (the last thing said may have been the assistant's question).

@@ -144,6 +144,13 @@ and opening a session yourself, every host we've seen is covered. If you have a
 request-scoped dependency the sink truly needs, resolve it in `user_dependency` and hang
 it on the user object or `request.state`.
 
+**Triage hint.** `payload.summary.already_supported` (when a summary exists) is `True`
+when the product already does what was asked (interview) or the guide fully answered the
+question (help). Those are documentation gaps or questions, not feature requests —
+file them accordingly. `payload.summary.summary` and `payload.details` are plain text
+(`Label: sentence` paragraphs, no markdown emphasis) since 0.1.2; hosts that render
+details as plain text need no special handling.
+
 **Title vs. details.** `payload.title` is always present (1–200 chars, user-edited;
 prefilled from the AI summary's title, or the first user message, or typed by the user
 in the bug form). `payload.details` is the user-edited body and may be empty. If your
@@ -309,9 +316,17 @@ def test_chat_streams():
 ```
 
 `StubProvider(fail_before_first=True)` produces a 503; `fail_after=2` produces an
-`error` frame after two chunks. Every call is recorded in `provider.calls` so you can
-assert on the exact blocks and messages the model would have seen — handy for checking
-that `context` and `extra_instructions` land where you expect.
+`error` frame after two chunks. Every call is recorded in `provider.calls` as a
+`ProviderCall(op, system_blocks, messages)` named tuple (`op` is `"stream"` or
+`"complete"`), so you can assert on exactly what the model would have seen:
+
+```python
+op, blocks, messages = provider.calls[0]
+assert op == "stream"
+assert blocks[0]["cache_control"] == {"type": "ephemeral"}          # the corpus block
+assert "Never discuss pricing" in blocks[1]["text"]                  # extra_instructions landed
+assert messages[0]["content"].startswith("[Screen: Albums]")        # context was prepended
+```
 
 Things worth a test in the host: the auth dependency denies anonymous users on all four
 endpoints; an escalation writes the row you expect with the transcript attached; a

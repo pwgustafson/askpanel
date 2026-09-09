@@ -102,6 +102,15 @@ Say what the product does **not** do, in plain words, when users are likely to a
 "Orchard does not share single photos; make an album." Without that sentence the model
 has to guess, and it will guess *yes*.
 
+## The corpus shapes the feature interview too
+
+In interview mode the assistant checks the corpus before running its agenda: if the
+documentation already covers what the person wants, it explains how the product does it
+today and asks whether that solves it. A good corpus therefore turns a share of
+"feature requests" into answered questions on the spot — and the summary the host
+receives carries `already_supported: true` so it can be filed as a question. Write the
+"what the product does" sentences with that in mind: they are what the interview quotes.
+
 ## Don't document features that are switched off
 
 If a feature exists behind a flag, or only on some plans, and you describe it, the

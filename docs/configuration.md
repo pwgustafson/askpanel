@@ -57,10 +57,10 @@ corpus_dir="app/help"                                # or corpus_text=open("help
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
-| `modes` | iterable of `"help"`, `"interview"` | both | Which modes are enabled. A request for a disabled mode is a 422; `/status` lists the enabled ones. |
+| `modes` | iterable of `"help"`, `"interview"` | both | Which modes are enabled. A request for a disabled mode is a 422; `/status` lists the enabled ones. In interview mode, when the corpus already covers what the user asks for, the assistant says so once and asks whether that solves it before continuing the agenda (see "Interview behaviour" below). |
 | `extra_instructions` | `str` | `""` | Product-specific guidance appended to the help and interview prompts (tone, what not to discuss). Not applied to summarize. |
 | `interview_agenda` | `list[str]` | the five default questions | The questions the interview walks through, in order. |
-| `interview_max_turns` | `int` | `6` | After this many assistant turns the interview stops asking and offers the summary. |
+| `interview_max_turns` | `int` | `6` | After this many assistant turns the interview stops asking and offers the summary. Before offering it, the assistant always asks what done looks like if that hasn't been said. |
 | `starters` | `dict[str, list[str]]` | `{}` | Suggested first questions per context, served by `/status`. The key `"*"` is the fallback the React hook uses when no context matches. |
 
 ```python
@@ -70,6 +70,22 @@ interview_agenda=["What are you trying to do?", "What gets in the way?", "What w
 interview_max_turns=4
 starters={"Albums": ["How do I share an album?"], "*": ["What can Orchard do?"]}
 ```
+
+### Interview behaviour
+
+The interview asks one agenda question per turn and never repeats one. Two things
+worth knowing when you read escalations:
+
+- **The corpus is checked first.** If the documentation already covers what the person
+  is asking for, the assistant explains how the product does it today and asks whether
+  that solves it — once. A "yes" ends the interview (they can still send it); a "no", or
+  simply more description of the problem, continues the agenda. The resulting summary
+  carries `already_supported: true` when the product already does it, so the host can
+  triage it as a question / docs gap rather than a feature.
+- **The outcome is always asked.** Before offering the summary, the assistant asks what
+  done would look like if the person hasn't said. Summaries therefore rarely have an
+  empty `outcome`; when a field really wasn't said it is `""` (never "not specified"),
+  and the plain-text `summary` omits it.
 
 ### Context
 
@@ -124,6 +140,17 @@ Optional provider extras the router uses when present: a `configured` attribute
 (`False` → the module disables itself), `complete_with_usage()` returning
 `(text, Usage)`, and a `stream()` generator that `return`s a `Usage`.
 
+`StubProvider.calls: list[ProviderCall]` records every call as a named tuple
+`ProviderCall(op, system_blocks, messages)` — `op` is `"stream"` or `"complete"`,
+`system_blocks` the list of `{"type": "text", "text": …}` blocks (index 0 is the cached
+corpus block), `messages` the `{"role", "content"}` dicts the model would have seen:
+
+```python
+op, blocks, messages = provider.calls[0]           # tuple unpacking
+assert provider.calls[0].op == "stream"            # or by name
+assert "[Screen: Albums]" in provider.calls[0].messages[0]["content"]
+```
+
 ### Derived
 
 | Property | What it is |
@@ -145,7 +172,7 @@ gives plain dicts):
 | `details` | `str` ≤ 5000, may be empty | The user-edited summary (markdown-ish text: `**bold**` labels, `- ` bullets), or free text. |
 | `transcript` | `list[Message]` | `[{role, content}, …]`; `[]` when the user skipped the chat (bug reports). This is the request body's `messages` field, renamed on the Python side to say what it *is* rather than where it came from. |
 | `context` | `str \| None` | The screen the panel was opened from; `None` when the client sent nothing. |
-| `summary` | `SummaryOut \| None` | The structured summary (`title`, `problem`, `workaround`, `outcome`, `summary`) when `/summarize` was used. |
+| `summary` | `SummaryOut \| None` | The structured summary when `/summarize` was used: `title`, `problem`, `workaround`, `outcome`, `summary` (plain text, no markdown), `already_supported` (bool). The three text fields are **shaped by mode** — interview: problem / current workaround / what done looks like; help: what they asked / what the guide covered / still unanswered. `already_supported=True` means the product already does it (interview) or the guide fully answered it (help): consider filing those as questions, not features. |
 | `protocol` | `int` | `1`. |
 
 Helpers: `payload.as_text()` returns `title` + blank line + `details` (without repeating
@@ -192,12 +219,14 @@ const panel = useAskPanel({ base: "/api/askpanel", getContext: () => location.pa
 | `fetch` | `(url, init) => Promise<Response>` | `globalThis.fetch` | Substitute fetch (tests, custom auth wrappers). |
 | `headers` | object or `() => object` | none | Extra headers on every request, e.g. a bearer token. |
 | `credentials` | `RequestCredentials` | `"same-origin"` | Passed to fetch; use `"include"` for a cross-origin cookie. |
-| `skipStatus` | `boolean` | `false` | Don't probe `/status` on mount. |
+| `skipStatus` | `boolean` | `false` | Don't probe `/status` on mount. `status` stays `null`, so `starters` are empty and `modes` default to both; pair with `enabled`. |
+| `enabled` | `boolean` | none | What to assume for `enabled` while `status` is `null` (i.e. with `skipStatus`, from your own `/me` flag). Ignored once `/status` answers. |
 
 ```ts
 protocolMismatch: (v) => console.warn("AskPanel protocol", v)
 headers: () => ({ Authorization: `Bearer ${getToken()}` })
 credentials: "include"
+skipStatus: true, enabled: me.features.askpanel      // host already knows the flag; no starters
 ```
 
 ### State
@@ -243,16 +272,17 @@ The default UI. Accepts every `useAskPanel` option plus:
 | `onOpenChange` | `(open: boolean) => void` | required | Called when the panel wants to close (Escape, scrim, close button, Done). |
 | `entries` | `("help" \| "feature" \| "bug")[]` | all three | Which entry buttons to show. `help`/`feature` also require the server to have that mode enabled. |
 | `onBugReport` | `() => void` | none | If set, the bug entry closes the panel and calls this instead of showing the built-in title/details form. |
-| `labels` | `Partial<AskPanelLabels>` | English defaults | Override any string. See `defaultLabels` for the keys. |
+| `labels` | `Partial<AskPanelLabels>` | English defaults | Override any string; see `defaultLabels` for the keys. `title` **replaces the whole header** (default header is `"<product_name> · Help"`, composed from `/status`). |
 | `className` | `string` | none | Added to the root element for scoping overrides. |
 | `initialMode` | `"help" \| "interview"` | none | Skip the entry screen and open straight into a mode. |
+| `skipStatus` + `enabled` | `boolean` | — | Hook options, passed through. With `skipStatus` the default panel shows chat entries only if `enabled` is true, and has no starters (they come from `/status`). Most hosts leave the probe on. |
 | `footer` | `ReactNode` | none | Rendered at the bottom of the entry screen (only there), e.g. a "View submitted feedback" link. |
 
 ```tsx
 <AskPanel base="/api/askpanel" open={open} onOpenChange={setOpen} getContext={() => tab} />
 <AskPanel … entries={["help", "feature"]} />
 <AskPanel … onBugReport={() => setBugFormOpen(true)} />
-<AskPanel … labels={{ sendToTeam: "Send to support", entryHelp: "Ask Orchard" }} />
+<AskPanel … labels={{ title: "Drovio help", sendToTeam: "Send to support" }} />   // header reads exactly "Drovio help"
 <AskPanel … className="my-help" />
 <AskPanel … initialMode="help" />
 <AskPanel … footer={<a href="/feedback">View submitted feedback →</a>} />

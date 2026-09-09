@@ -73,7 +73,8 @@ export function Shell() {
 ```
 
 That renders, when `open` is true, a fixed right-hand `<aside role="dialog">` over a
-scrim. It probes `GET {base}/status` once on mount and, if `enabled` is false, hides the
+scrim. Opening moves keyboard focus into the panel with `preventScroll`, so the host
+page never scrolls; nothing in the panel is scrolled into view. It probes `GET {base}/status` once on mount and, if `enabled` is false, hides the
 chat entries so the user only sees what works.
 
 **Flow.** Entry screen (Ask a question / Request a feature / Report a problem, plus
@@ -97,6 +98,17 @@ render no bug entry at all.
 <AskPanel … entries={["help", "feature"]} />        // no bug entry at all
 ```
 
+**Skipping the probe.** `skipStatus` (a hook option, passed through) stops the
+`/status` GET on mount. `status` then stays `null`, so the panel has no starters and
+assumes both modes; pass `enabled` (from your own `/me` flag) or the chat entries stay
+hidden:
+
+```tsx
+<AskPanel … skipStatus enabled={me.features.askpanel} />
+```
+
+Most hosts leave the probe on — it's one cheap GET and it's where starters come from.
+
 **Extra links.** The entry screen has a `footer` slot for anything else your feedback
 modal used to carry:
 
@@ -110,13 +122,15 @@ a tab, say) and the client **omits the `context` field entirely** — it never s
 empty string, so a strict `allowed_contexts` list on the server never sees one. Server
 side, a missing context is always accepted.
 
-**Strings.** Every visible string is in `labels`:
+**Strings.** Every visible string is in `labels`; import `defaultLabels` to see the
+full list. The header is composed as `"<product_name> · <labels.title>"` by default
+(`"Orchard · Help"`, with the product name from `/status`); setting `labels.title`
+**replaces the whole header** — no product prefix, no separator:
 
 ```tsx
-<AskPanel … labels={{ title: "Ask Orchard", sendToTeam: "Send to support", sentDefault: "Got it!" }} />
+<AskPanel … labels={{ title: "Drovio help", sendToTeam: "Send to support", sentDefault: "Got it!" }} />
+// header: "Drovio help"
 ```
-
-Import `defaultLabels` to see the full list.
 
 ## Authentication
 
@@ -140,6 +154,12 @@ options for everything else:
 whose `body` is a `ReadableStream` (the SSE reader needs it — don't buffer).
 
 ## Theming
+
+The stylesheet owns everything it renders — list markers, headings, buttons, inputs —
+so a host with Tailwind preflight or normalize.css (which reset `ul` to
+`list-style: none; padding: 0`) gets the same panel as one without. If you see
+unstyled bullets or headings, check that `@askpanel/react/styles.css` is actually
+imported after your reset.
 
 The stylesheet uses only `--askpanel-*` custom properties and **never consults
 `prefers-color-scheme`**: it ships one (light) set of defaults and follows whatever your
