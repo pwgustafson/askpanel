@@ -3,6 +3,28 @@
 Every option of the Python `AskPanelConfig`, the React `useAskPanel` hook, and the
 `<AskPanel>` component, each with a one-line example.
 
+## Python: public API
+
+Everything below is importable from `askpanel` and is a stable name for the 0.x line
+(modules `askpanel.protocol`, `.config`, `.corpus`, `.provider`, `.router`, `.sinks`,
+`.prompts` are also importable, but prefer the top level):
+
+```python
+from askpanel import (
+    AskPanelConfig, create_router,                                  # the two you need
+    EscalationPayload, EscalationResult, SummaryOut, Message,       # what on_escalate sees / returns
+    ChatRequest, SummarizeRequest, EscalateRequest, StatusOut,      # request/response models
+    DeltaFrame, DoneFrame, ErrorFrame,                              # SSE frames
+    PROTOCOL_VERSION, PROTOCOL_HEADER,
+    Provider, AnthropicProvider, StubProvider, ProviderError, Usage,
+    QuotaExceeded, call_host,                                       # quota rejection; run a sync-or-async host callback
+    load_corpus, lint_corpus, lint_text, LintIssue, system_blocks, estimate_tokens,
+    DEFAULT_BANNED_WORDS, DEFAULT_INTERVIEW_AGENDA,
+    github_issue, webhook,                                          # ready-made sinks
+    __version__,
+)
+```
+
 ## Python: `AskPanelConfig`
 
 ```python
@@ -20,13 +42,14 @@ app.include_router(create_router(config), prefix="/api/askpanel")
 |---|---|---|
 | `product_name` | `str` | Used in the prompts ("the help assistant for Orchard") and returned by `/status`. |
 | `user_dependency` | FastAPI dependable | Your existing `current_user`. Guards every endpoint; its return value is passed to `on_escalate`, `quota`, and `on_turn`. Raise `HTTPException(401)` from it to deny. |
-| `on_escalate` | `async (payload, user) -> EscalationResult` | The only place data leaves the module. May return an `EscalationResult`, a `dict`, a `str` (becomes `message`), or `None` (ok). |
+| `on_escalate` | `(payload, user[, request]) -> EscalationResult` — `async def` **or** plain `def` | The only place data leaves the module. A plain `def` runs in Starlette's threadpool (like a sync route), so a blocking ORM commit is fine. Declare a third parameter named `request` to also receive the `fastapi.Request`. May return an `EscalationResult`, a `dict`, a `str` (becomes `message`), or `None` (ok). |
 | `corpus_dir` **or** `corpus_text` | `str \| Path` / `str` | The markdown corpus: a directory of `*.md` joined in filename order, or the already-joined text. |
 
 ```python
 product_name="Orchard"
 user_dependency=current_user                         # def current_user(request) -> User
-on_escalate=save_feedback                            # async def save_feedback(payload: EscalationPayload, user: User) -> EscalationResult
+on_escalate=save_feedback                            # def save_feedback(payload, user) -> EscalationResult   (sync or async)
+on_escalate=save_feedback                            # def save_feedback(payload, user, request) -> ...     (wants the Request too)
 corpus_dir="app/help"                                # or corpus_text=open("help.md").read()
 ```
 
@@ -70,15 +93,21 @@ context_validator=lambda c: c.startswith("/") and len(c) < 80
 |---|---|---|---|
 | `max_messages` | `int` | `40` | Maximum messages per request (422 above). |
 | `max_message_chars` | `int` | `4000` | Maximum characters per message (422 above). |
-| `quota` | `async (user) -> bool` | none | Host-side rate/quota check, called before every model call (`/chat`, `/summarize`); `False` → 429. Not called for `/escalate`. May be sync. |
-| `on_turn` | `async (user, mode, usage) -> None` | none | Called after every model call with a `Usage` (`operation`, `model`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`; `None` when the provider does not report). Exceptions are logged, never surfaced. |
+| `quota` | `(user[, mode]) -> bool \| str` — sync or async | none | Host-side rate/quota check, run **before** every model call (`/chat`, `/summarize`; never `/escalate`). Return `True` to allow. Return `False`/`None` → 429 with the default message; return a non-empty `str` → 429 with that string as `detail` (the panel shows it verbatim); or raise `QuotaExceeded("…")`. Declare a second parameter to receive the mode. |
+| `on_turn` | `(user, mode, usage) -> None` — sync or async | none | Run **after** every model call that returned a 200: on `/chat` when the stream finishes (and, with `usage=None`, when it dies midway), and on `/summarize`. Never after a 422/429/503, so a rejected request is never counted. `Usage` has `operation` (`"chat"`/`"summarize"`), `model`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (`None` when the provider does not report). Exceptions are logged, never surfaced. |
 
 ```python
 max_messages=20
 max_message_chars=2000
-quota=lambda user: turns_today(user.org_id) < 200            # sync or async
-on_turn=log_usage                                            # async def log_usage(user, mode, usage: Usage | None)
+quota=lambda user: turns_today(user.org_id) < 200            # bool: default 429 message
+quota=lambda user, mode: None if ok(user) else "You've used today's 50 questions — try again tomorrow"
+on_turn=log_usage                                            # def log_usage(user, mode, usage: Usage | None)   (sync or async)
 ```
+
+**Order of one `/chat` request:** auth dependency → `enabled` check (503) → body validation
+(422) → mode/context check (422) → `quota` (429) → first model chunk (503 if it fails) →
+stream → `on_turn`. Counting turns in `on_turn` and reading the count in `quota` is the
+intended way to build a cap; a request that is 429'd never reaches `on_turn`.
 
 ### Provider
 
@@ -105,18 +134,24 @@ Optional provider extras the router uses when present: a `configured` attribute
 
 ### The escalation payload
 
-`on_escalate` receives an `EscalationPayload`:
+`on_escalate` receives an `EscalationPayload` (a pydantic model; `payload.model_dump()`
+gives plain dicts):
 
 | Field | Type | Notes |
 |---|---|---|
 | `mode` | `"help" \| "interview"` | Which mode the conversation ran in. |
 | `kind` | `"question" \| "feature" \| "bug"` | What the user is sending. |
-| `title` | `str` ≤ 200 | User-edited. |
-| `details` | `str` ≤ 5000 | The user-edited summary, or free text. |
-| `transcript` | `list[Message]` | `[]` when the user skipped the chat (bug reports). |
-| `context` | `str \| None` | The screen the panel was opened from. |
-| `summary` | `SummaryOut \| None` | The structured summary when `/summarize` was used. |
+| `title` | `str`, 1–200 chars, never empty | Always user-editable in the review step. Prefilled from `SummaryOut.title` when `/summarize` ran, else from the first user message (truncated), else typed by the user (bug form). |
+| `details` | `str` ≤ 5000, may be empty | The user-edited summary (markdown-ish text: `**bold**` labels, `- ` bullets), or free text. |
+| `transcript` | `list[Message]` | `[{role, content}, …]`; `[]` when the user skipped the chat (bug reports). This is the request body's `messages` field, renamed on the Python side to say what it *is* rather than where it came from. |
+| `context` | `str \| None` | The screen the panel was opened from; `None` when the client sent nothing. |
+| `summary` | `SummaryOut \| None` | The structured summary (`title`, `problem`, `workaround`, `outcome`, `summary`) when `/summarize` was used. |
 | `protocol` | `int` | `1`. |
+
+Helpers: `payload.as_text()` returns `title` + blank line + `details` (without repeating
+the title when `details` already starts with it) for hosts whose feedback store has a
+single free-text field; `payload.transcript_text()` renders the transcript as
+`User: …` / `Assistant: …` lines.
 
 Return `EscalationResult(ok=True, id="…", message="A person will reply in your feedback list.")`.
 `message` is shown to the user on the confirmation screen.
@@ -152,7 +187,7 @@ const panel = useAskPanel({ base: "/api/askpanel", getContext: () => location.pa
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `base` | `string` | required | Where the router is mounted. |
-| `getContext` | `() => string \| undefined` | none | Returns the current screen. Captured once, when `open()` is called. |
+| `getContext` | `() => string \| undefined` | none | Returns the current screen. Captured once, when `open()` is called. A falsy result (`undefined`, `null`, `""`) means **no `context` field is sent at all**, which every server accepts regardless of `allowed_contexts`. Results are truncated to 200 chars. |
 | `protocolMismatch` | `(serverVersion: string) => void` | none | Called when the server answers with a different `X-AskPanel-Protocol`. The request also rejects. |
 | `fetch` | `(url, init) => Promise<Response>` | `globalThis.fetch` | Substitute fetch (tests, custom auth wrappers). |
 | `headers` | object or `() => object` | none | Extra headers on every request, e.g. a bearer token. |
@@ -211,6 +246,7 @@ The default UI. Accepts every `useAskPanel` option plus:
 | `labels` | `Partial<AskPanelLabels>` | English defaults | Override any string. See `defaultLabels` for the keys. |
 | `className` | `string` | none | Added to the root element for scoping overrides. |
 | `initialMode` | `"help" \| "interview"` | none | Skip the entry screen and open straight into a mode. |
+| `footer` | `ReactNode` | none | Rendered at the bottom of the entry screen (only there), e.g. a "View submitted feedback" link. |
 
 ```tsx
 <AskPanel base="/api/askpanel" open={open} onOpenChange={setOpen} getContext={() => tab} />
@@ -219,12 +255,15 @@ The default UI. Accepts every `useAskPanel` option plus:
 <AskPanel … labels={{ sendToTeam: "Send to support", entryHelp: "Ask Orchard" }} />
 <AskPanel … className="my-help" />
 <AskPanel … initialMode="help" />
+<AskPanel … footer={<a href="/feedback">View submitted feedback →</a>} />
 ```
 
 ### Theming
 
 Import `@askpanel/react/styles.css` once and override any of these on `:root` or on
-`.askpanel` (or your `className`):
+`.askpanel` (or your `className`). The stylesheet **never consults
+`prefers-color-scheme`** — the defaults below are the only theme it ships, so the panel
+follows whatever your app's theme sets on the variables, not the OS:
 
 ```css
 .askpanel {
@@ -235,6 +274,34 @@ Import `@askpanel/react/styles.css` once and override any of these on `:root` or
   --askpanel-scrim: rgba(0,0,0,.35); --askpanel-radius: 10px;  --askpanel-width: 420px;
   --askpanel-font: system-ui, sans-serif; --askpanel-font-size: 14px;
   --askpanel-z: 1000;           --askpanel-shadow: -8px 0 30px rgba(0,0,0,.12);
+}
+```
+
+| Variable | Default | Used for |
+|---|---|---|
+| `--askpanel-bg` | `#ffffff` | panel and input background |
+| `--askpanel-fg` | `#1a1a1a` | text |
+| `--askpanel-muted` | `#6b6b6b` | hints, labels, close button |
+| `--askpanel-border` | `#e2e2e2` | borders and dividers |
+| `--askpanel-accent` | `#2b5fd9` | buttons, links, focus ring |
+| `--askpanel-accent-fg` | `#ffffff` | text on accent buttons |
+| `--askpanel-surface` | `#f5f5f7` | assistant bubbles, starters, hover |
+| `--askpanel-user-bg` | `#e8effc` | user bubbles |
+| `--askpanel-error-bg` / `--askpanel-error-fg` | `#fde8e8` / `#9b1c1c` | error banner |
+| `--askpanel-scrim` | `rgba(0,0,0,.35)` | backdrop |
+| `--askpanel-radius` | `10px` | corners |
+| `--askpanel-width` | `420px` | aside width (100vw below 480px) |
+| `--askpanel-font` / `--askpanel-font-size` | `system-ui, …` / `14px` | typography |
+| `--askpanel-z` | `1000` | z-index of the whole overlay |
+| `--askpanel-shadow` | `-8px 0 30px rgba(0,0,0,.12)` | aside shadow |
+
+Class-based dark mode (shadcn-style `.dark` on `<html>`):
+
+```css
+.dark .askpanel {
+  --askpanel-bg: #111214;  --askpanel-fg: #ececec;  --askpanel-muted: #9a9a9a;
+  --askpanel-border: #2a2b2f;  --askpanel-surface: #1b1c20;  --askpanel-user-bg: #1e2a44;
+  --askpanel-error-bg: #3a1717;  --askpanel-error-fg: #ffb4b4;  --askpanel-scrim: rgba(0,0,0,.6);
 }
 ```
 

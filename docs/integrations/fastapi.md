@@ -10,10 +10,25 @@ with real code. For the full option list see [configuration.md](../configuration
 ```bash
 uv add askpanel                       # once published
 uv add /path/to/askpanel/python       # from a checkout (add --editable to hack on it)
+pip install /path/to/askpanel/python  # pip; or -e for editable
 ```
 
 Requires Python ≥ 3.11, FastAPI, Pydantic v2, and the `anthropic` SDK (pulled in
 automatically).
+
+**Before it's on PyPI — `requirements.txt` and Docker.** A relative path outside the
+Docker build context won't resolve inside the image. Build a wheel and vendor it:
+
+```bash
+(cd /path/to/askpanel/python && uv build)            # → dist/askpanel-0.1.1-py3-none-any.whl
+mkdir -p vendor && cp /path/to/askpanel/python/dist/askpanel-0.1.1-py3-none-any.whl vendor/
+echo "./vendor/askpanel-0.1.1-py3-none-any.whl" >> requirements.txt
+```
+
+`pip install -r requirements.txt` resolves that path relative to the requirements file,
+and `COPY vendor/ vendor/` in the Dockerfile makes it available in the build. For local
+hacking use `pip install -e ../askpanel/python` in your venv and keep the wheel line for
+the image. Swap the line for `askpanel==0.1.1` once it's published.
 
 ## Mount
 
@@ -69,27 +84,71 @@ the user object: only the corpus and the transcript go to the model.
 ## Escalation: where the data goes
 
 `on_escalate(payload, user)` is the only exit. Write it against whatever feedback
-storage you already have.
+storage you already have. It may be `async def` or a plain `def`: a sync function runs
+in Starlette's threadpool exactly like a sync FastAPI route, so a blocking ORM commit
+does not stall the event loop.
+
+**Sync SQLAlchemy host** (the common case — open your own session, as a background task
+would):
 
 ```python
 from askpanel import EscalationPayload, EscalationResult
+from app.db import SessionLocal
 
-async def on_escalate(payload: EscalationPayload, user: User) -> EscalationResult:
-    async with session_factory() as db:
+def on_escalate(payload: EscalationPayload, user: User) -> EscalationResult:
+    with SessionLocal() as db:
         row = Feedback(
             user_id=user.id,
             org_id=user.org_id,
             kind=payload.kind,                                   # question | feature | bug
-            title=payload.title,
-            body=payload.details,                                # the user-edited summary
+            message=payload.as_text(),                           # title + details, for a single text column
             transcript=[m.model_dump() for m in payload.transcript],   # JSONB column
             screen=payload.context,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return EscalationResult(ok=True, id=str(row.id), message="A person will reply in your feedback list.")
+```
+
+**Async host**, with separate title/body columns:
+
+```python
+async def on_escalate(payload: EscalationPayload, user: User) -> EscalationResult:
+    async with session_factory() as db:
+        row = Feedback(
+            user_id=user.id,
+            kind=payload.kind,
+            title=payload.title,
+            body=payload.details,                                # the user-edited summary
+            transcript=[m.model_dump() for m in payload.transcript],
             structured=payload.summary.model_dump() if payload.summary else None,
         )
         db.add(row)
         await db.commit()
     return EscalationResult(ok=True, id=str(row.id), message="A person will reply in your feedback list.")
 ```
+
+**Need the request** (headers, `request.state`, your `request.app.state` pools)? Add a
+third parameter named `request` and the router passes the `fastapi.Request`:
+
+```python
+def on_escalate(payload, user, request: Request) -> EscalationResult:
+    db = request.state.db            # if your middleware puts a session there
+    ...
+```
+
+There is no way to declare extra `Depends()` on the sink — the router owns the route
+signature — but between `user` (already resolved through your dependency), `request`,
+and opening a session yourself, every host we've seen is covered. If you have a
+request-scoped dependency the sink truly needs, resolve it in `user_dependency` and hang
+it on the user object or `request.state`.
+
+**Title vs. details.** `payload.title` is always present (1–200 chars, user-edited;
+prefilled from the AI summary's title, or the first user message, or typed by the user
+in the bug form). `payload.details` is the user-edited body and may be empty. If your
+store has one free-text field, use `payload.as_text()`, which joins them without
+repeating the title when the details already begin with it.
 
 Notes:
 
@@ -145,11 +204,29 @@ async def on_turn(user: User, mode: str, usage: Usage | None) -> None:
                         tokens=(usage.input_tokens or 0) + (usage.output_tokens or 0) if usage else 0)
 ```
 
-`quota` runs before every model call (`/chat` and `/summarize`, not `/escalate`);
-`False` → 429, which the panel shows as "You have reached the limit for now".
-`on_turn` runs after every model call; `usage` carries the provider's token counts
-(including cache reads, so you can see caching working). Errors in `on_turn` are logged
-and swallowed.
+Both may be sync or async. The order for one request is: auth → `enabled` → validation
+→ `quota` → model call → `on_turn`. So:
+
+- `quota` runs **before** every model call (`/chat` and `/summarize`; never `/escalate`).
+  Return `True` to allow. Return `False` (or `None`) for a 429 with the default message,
+  or return a **string** to make that the 429 `detail`, which the panel shows verbatim:
+
+  ```python
+  def quota(user: User, mode: str) -> bool | str:
+      used = count_turns_today(user.org_id)
+      return True if used < 50 else "You've used today's 50 questions — try again tomorrow."
+  ```
+
+  (Raising `askpanel.QuotaExceeded("…")` does the same. Declare the second `mode`
+  parameter only if you want it.)
+- `on_turn` runs **after** every model call that returned a 200: on `/chat` when the
+  stream finishes and — with `usage=None` — when it dies midway; on `/summarize` after the
+  call. It never runs for a request that was 429'd, 422'd, or 503'd, so a rejected request
+  is never counted. `usage.operation` is `"chat"` or `"summarize"`; `mode` is the
+  conversation mode. Token counts include cache reads, so you can watch caching engage.
+  Errors in `on_turn` are logged and swallowed.
+
+A per-org daily cap is therefore: insert a row in `on_turn`, count rows in `quota`.
 
 Request caps are enforced before anything reaches the model: `max_messages` (40) and
 `max_message_chars` (4000). Lower them if your users don't need long conversations.
@@ -165,8 +242,27 @@ non-empty. When `False`:
 - `/escalate` keeps working.
 
 So a deployment without `ANTHROPIC_API_KEY` degrades to "plain feedback form" with no
-other change. If you surface feature flags on your own `/me` endpoint, add
-`config.enabled` there and skip the panel's probe with `skipStatus`.
+other change.
+
+**Reading the flag from Python.** `config.enabled` is the property — the same value
+`/status` returns, so it can't drift from the package's definition. Keep the config in a
+module and import it wherever you need the flag:
+
+```python
+# app/askpanel.py
+config = AskPanelConfig(...)
+router = create_router(config)
+
+# app/routes/auth.py
+from app.askpanel import config as askpanel_config
+
+@router.get("/me")
+def me(user: User = Depends(current_user)):
+    return {"email": user.email, "features": {"askpanel": askpanel_config.enabled}}
+```
+
+Then pass `skipStatus` to the panel if you'd rather it not probe `/status` itself
+(it still needs `/status` for starters, so most hosts leave the probe on).
 
 To turn one mode off: `modes={"help"}`.
 

@@ -39,8 +39,12 @@ npm install /path/to/askpanel/js         # or: npm install ../askpanel/js
 Once published: `uv add askpanel` and `npm install @askpanel/react`.
 
 > `npm install <local path>` symlinks the package; it does **not** run its build. Run
-> `npm run build` in `js/` first (and again after pulling changes), or use
-> `npm pack` in `js/` and install the resulting `.tgz`, which builds automatically.
+> `npm run build` in `js/` first (and again after pulling changes), and add
+> `resolve.dedupe: ["react", "react-dom"]` to your Vite config so the symlink doesn't
+> pull a second React. For Docker/CI, `npm pack` in `js/` (builds automatically) and
+> install the `.tgz`; for Python, `uv build` and vendor the wheel in `requirements.txt`.
+> Both recipes: [`docs/integrations/react.md`](docs/integrations/react.md#install) and
+> [`docs/integrations/fastapi.md`](docs/integrations/fastapi.md#install).
 
 ### 2. Write a corpus
 
@@ -95,8 +99,9 @@ app = FastAPI()
 app.include_router(create_router(config), prefix="/api/askpanel")
 ```
 
-Set `ANTHROPIC_API_KEY` in the environment. Without it (or with an empty corpus) the
-router reports `enabled: false` and the panel hides itself — nothing else breaks.
+`on_escalate` may be a plain `def` too (it runs in a threadpool). Set `ANTHROPIC_API_KEY`
+in the environment. Without it (or with an empty corpus) `config.enabled` is `False`,
+`/status` reports it, and the panel hides its chat entries — nothing else breaks.
 
 ### 4. Mount the panel (React)
 

@@ -15,16 +15,37 @@ npm install @askpanel/react                 # once published
 npm install /path/to/askpanel/js
 ```
 
-`npm install <path>` creates a symlink to the folder and does **not** run the package's
-build, so `dist/` must exist. Re-run `npm run build` in `js/` after pulling changes.
-Alternatively `npm pack` in `js/` (which builds automatically) and install the `.tgz`.
+`npm install <path>` creates a **symlink** to the folder and does **not** run the
+package's build, so `dist/` must exist. Re-run `npm run build` in `js/` after pulling
+changes.
+
+**The symlink trap.** A symlinked package that imports React can resolve a *second*
+copy of React from its own `node_modules` (the dev dependency it uses for tests), and
+you get "Invalid hook call". Two fixes — pick one:
+
+1. Tell Vite to dedupe (recommended for local development):
+
+   ```ts
+   // vite.config.ts
+   export default defineConfig({ resolve: { dedupe: ["react", "react-dom"] } });
+   ```
+
+2. Install a tarball instead of a symlink (recommended for Docker images and CI, and
+   the right shape for `package.json` until the package is on npm):
+
+   ```bash
+   (cd /path/to/askpanel/js && npm pack)                 # runs the build, writes askpanel-react-0.1.1.tgz
+   mkdir -p vendor && mv /path/to/askpanel/js/askpanel-react-0.1.1.tgz vendor/
+   npm install ./vendor/askpanel-react-0.1.1.tgz         # package.json gets "file:vendor/askpanel-react-0.1.1.tgz"
+   ```
+
+   The tarball contains only `dist/` and `package.json`, so there is no second React.
+   Commit `vendor/` (or build it in CI) so `COPY web/ web/ && npm ci` works in the
+   Dockerfile. Swap for `"@askpanel/react": "^0.1.1"` once published.
 
 Peer dependencies: `react` and `react-dom` ≥ 18. No other runtime dependencies.
-
 Vite, Next.js, CRA, and plain Rollup all work — the package is plain ESM with
-TypeScript declarations. If your bundler dedupes React (Vite does by default), a
-symlinked local install is fine; if you see "invalid hook call", add
-`resolve.dedupe: ["react", "react-dom"]` to your Vite config.
+TypeScript declarations.
 
 ## The default panel
 
@@ -66,13 +87,28 @@ doesn't lose a reply; **Stop** ends the stream and keeps what arrived.
 
 **Bugs.** With `entries={["help", "feature", "bug"]}` (the default) the bug entry shows a
 plain title/details form that escalates with `kind: "bug"` and no transcript. If you
-already have a bug form (with screenshots, say), pass `onBugReport`: the panel closes and
-calls it instead.
+already have a bug form (with screenshots, say), pass `onBugReport`: **the bug entry is
+still rendered by the panel**; clicking it calls `onOpenChange(false)` and then
+`onBugReport()` instead of opening the built-in form. Omit `"bug"` from `entries` to
+render no bug entry at all.
 
 ```tsx
 <AskPanel … entries={["help", "feature", "bug"]} onBugReport={() => setBugFormOpen(true)} />
 <AskPanel … entries={["help", "feature"]} />        // no bug entry at all
 ```
+
+**Extra links.** The entry screen has a `footer` slot for anything else your feedback
+modal used to carry:
+
+```tsx
+<AskPanel … footer={<a href="/feedback">View submitted feedback →</a>} />
+```
+
+**Context.** `getContext` is called once when a conversation opens. Return the screen
+name; return `undefined`/`null`/`""` when there is no meaningful screen (a page without
+a tab, say) and the client **omits the `context` field entirely** — it never sends an
+empty string, so a strict `allowed_contexts` list on the server never sees one. Server
+side, a missing context is always accepted.
 
 **Strings.** Every visible string is in `labels`:
 
@@ -82,19 +118,43 @@ calls it instead.
 
 Import `defaultLabels` to see the full list.
 
-**Auth.** Requests go through `fetch` with `credentials: "same-origin"`, so a session
-cookie just works. For a bearer token:
+## Authentication
+
+Requests go through `fetch` with `credentials: "same-origin"`, so a same-origin session
+cookie just works with no configuration. The hook and the panel accept the same three
+options for everything else:
 
 ```tsx
+// bearer token (read fresh on every request)
 <AskPanel … headers={() => ({ Authorization: `Bearer ${getToken()}` })} />
+
+// cross-origin API with a cookie
+<AskPanel … credentials="include" />
+
+// your own fetch wrapper (adds CSRF headers, refreshes tokens, whatever it does today)
+<AskPanel … fetch={apiFetch} />
 ```
 
-For a cross-origin API with cookies: `credentials="include"`.
+`headers` may be a plain object or a function; `fetch` must have the signature
+`(url: string, init?: RequestInit) => Promise<Response>` and return a real `Response`
+whose `body` is a `ReadableStream` (the SSE reader needs it — don't buffer).
 
 ## Theming
 
-The stylesheet uses only `--askpanel-*` custom properties. Override them on `:root`, on
-`.askpanel`, or via a `className`:
+The stylesheet uses only `--askpanel-*` custom properties and **never consults
+`prefers-color-scheme`**: it ships one (light) set of defaults and follows whatever your
+app sets on the variables, so an OS-dark machine viewing your light theme gets a light
+panel. The full variable table is in [configuration.md](../configuration.md#theming).
+Override on `:root`, on `.askpanel`, or via a `className`:
+
+```css
+/* class-based dark mode, e.g. a `.dark` on <html> toggled by the user */
+.dark .askpanel {
+  --askpanel-bg: #111214;  --askpanel-fg: #ececec;  --askpanel-muted: #9a9a9a;
+  --askpanel-border: #2a2b2f;  --askpanel-surface: #1b1c20;  --askpanel-user-bg: #1e2a44;
+  --askpanel-error-bg: #3a1717;  --askpanel-error-fg: #ffb4b4;  --askpanel-scrim: rgba(0,0,0,.6);
+}
+```
 
 ```css
 /* match a dark shadcn-style theme */

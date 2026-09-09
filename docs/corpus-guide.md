@@ -56,10 +56,31 @@ by default:
 endpoint  database  postgres  jsonb  migration  alembic  api  backend  frontend  deploy  env var
 ```
 
-Matches are whole-word and case-insensitive ("API" fails; "apiary" doesn't). Change the
-list with `--ban` (replace) and `--allow` (remove one), or in code with
-`lint_corpus(dir, banned=[...])`. The default list is a floor, not a ceiling — add your
-own product's internal jargon.
+**Matching rule:** whole-word, case-insensitive. A "word" is bounded by anything that is
+not a letter, digit, underscore, or hyphen, so `API` and `api` fail but `apiary`,
+`capital`, `rapid`, and `api-key` do not; `deploy` fails but `deployment` does not;
+`env var` matches across any whitespace (`env  var`, `env\nvar`). The exact regex the
+package uses, if you want to mirror it in your own CI:
+
+```
+(?<![\w-])(endpoint|database|…|env\s+var)(?![\w-])     # re.IGNORECASE
+```
+
+Output is one line per finding, `file:line: severity: message`, and the exit code is 1
+when there is at least one error:
+
+```
+$ askpanel lint help/
+04-finding-photos.md:1: error: first line must be a title (`# What this file is about`)
+06-sharing-albums.md:12: error: banned word 'API': users don't say this; describe what they see instead
+help: warning: corpus is 6210 characters; aim above 8000 so prompt caching engages
+8 file(s), 2 error(s), 1 warning(s)
+```
+
+Change the list with `--ban WORD` (repeatable; replaces the defaults) and
+`--allow WORD` (removes one from the defaults), or in code with
+`lint_corpus(dir, banned=[...])` / `lint_text(text, banned=[...])`. The default list is
+a floor, not a ceiling — add your own product's internal jargon.
 
 A useful test: read a paragraph aloud to someone who uses the product but doesn't build
 it. If they'd have to ask what a word means, replace it.
