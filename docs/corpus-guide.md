@@ -77,10 +77,21 @@ help: warning: corpus is 6210 characters; aim above 8000 so prompt caching engag
 8 file(s), 2 error(s), 1 warning(s)
 ```
 
-Change the list with `--ban WORD` (repeatable; replaces the defaults) and
-`--allow WORD` (removes one from the defaults), or in code with
-`lint_corpus(dir, banned=[...])` / `lint_text(text, banned=[...])`. The default list is
-a floor, not a ceiling — add your own product's internal jargon.
+Change the list with `--ban WORD` (repeatable; **replaces** the defaults) and
+`--allow WORD` (removes one from the defaults). In code, `banned=` likewise replaces
+the defaults — spread them to extend:
+
+```python
+from askpanel import DEFAULT_BANNED_WORDS, has_errors, lint_corpus
+
+issues = lint_corpus(HELP_DIR, banned=[*DEFAULT_BANNED_WORDS, "crew", "crews", "crew's", "solver"])
+assert not has_errors(issues), "\n".join(map(str, issues))     # warnings (size) don't fail
+```
+
+`LintIssue` fields: `file`, `line` (1-based; `0` for whole-file/corpus findings),
+`message`, `severity` (`"error"` | `"warning"`). Matching is whole-word, so ban plurals
+and possessives explicitly (`crew` does not catch `crews`). The default list is a floor,
+not a ceiling — add your own product's internal jargon.
 
 A useful test: read a paragraph aloud to someone who uses the product but doesn't build
 it. If they'd have to ask what a word means, replace it.

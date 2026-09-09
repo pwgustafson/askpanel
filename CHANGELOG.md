@@ -4,6 +4,29 @@ Both packages (`askpanel` on PyPI-to-be, `@askpanel/react` on npm-to-be) share a
 Protocol version is 1 throughout; every wire change so far has been additive
 (see `docs/protocol.md` → Versioning).
 
+## 0.1.5 — 2026-09-09
+
+Third host, adopted blind from the public repo with only the README and its links
+(VBS Crew Builder; AP-37..61).
+
+- **React (bugs):** `getContext()` is re-read every time the panel opens, so the entry
+  screen's starters follow the screen it is opened on (was: read when `/status` resolved
+  and after a conversation — hosts had to remount with `key`); `refreshContext()` action.
+  **Done** after Sent now resets, so the next open lands on the entry screen with a
+  cleared transcript. New `--askpanel-user-fg` variable. Tests for both bugs and for a
+  panel mounted already open.
+- **Python:** `AnthropicProvider(request_options=…, summary_request_options=…)` passes
+  any Messages API parameter through (effort, thinking); `StubProvider(configured=False)`
+  for the disabled path; `user_dependency` returning `None` covered by a test.
+- **Docs:** README install straight from GitHub (archive URL with `#subdirectory=python`,
+  verified in `python:3.12-slim`; `npm pack` tarball for React) with the Docker layer
+  note; `user_dependency` required and `None`-tolerant; the fixed `kind` vocabulary;
+  server-side starters + exact-match contexts and the SPA-registry recipe; the four
+  endpoint paths; escalation costs a `/summarize`; key read at construction and from
+  settings; `askpanel prompt` estimate on stderr; `lint_corpus(banned=)` replaces
+  (spread `DEFAULT_BANNED_WORDS`), `LintIssue` fields; single-text-column trade-off;
+  errors are plain `HTTPException`s; `resolve.dedupe` is symlink-only.
+
 ## 0.1.4 — 2026-09-09
 
 Last round of the v0.1 integration loop (AP-31..36).

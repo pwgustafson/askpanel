@@ -23,7 +23,7 @@ changes.
 copy of React from its own `node_modules` (the dev dependency it uses for tests), and
 you get "Invalid hook call". Two fixes — pick one:
 
-1. Tell Vite to dedupe (recommended for local development):
+1. Tell Vite to dedupe (symlink installs only — a tarball needs nothing):
 
    ```ts
    // vite.config.ts
@@ -39,9 +39,22 @@ you get "Invalid hook call". Two fixes — pick one:
    npm install ./vendor/askpanel-react-0.1.1.tgz         # package.json gets "file:vendor/askpanel-react-0.1.1.tgz"
    ```
 
-   The tarball contains only `dist/` and `package.json`, so there is no second React.
-   Commit `vendor/` (or build it in CI) so `COPY web/ web/ && npm ci` works in the
-   Dockerfile. Swap for `"@askpanel/react": "^0.1.1"` once published.
+   The tarball contains only `dist/` and `package.json`, so there is no second React
+   and `resolve.dedupe` is not needed. Commit `vendor/` (or build it in CI). **Docker
+   layer order:** the lockfile now points at `file:vendor/…tgz`, so a cache-friendly
+   Dockerfile that copies `package.json` + lockfile and installs before copying the rest
+   must add `COPY vendor/ ./vendor/` before `RUN npm ci`:
+
+   ```dockerfile
+   COPY package.json package-lock.json ./
+   COPY vendor/ ./vendor/                 # ← before install
+   RUN npm ci
+   COPY . .
+   ```
+
+   Swap for `"@askpanel/react": "^0.1.5"` once published. This is also the recipe for
+   installing **from GitHub without a checkout** — npm can't install a subdirectory of a
+   git repo, so clone, `npm pack` in `js/`, and vendor the tarball.
 
 Peer dependencies: `react` and `react-dom` ≥ 18. No other runtime dependencies.
 Vite, Next.js, CRA, and plain Rollup all work — the package is plain ESM with
@@ -78,9 +91,14 @@ page never scrolls; nothing in the panel is scrolled into view. It probes `GET {
 chat entries so the user only sees what works.
 
 **Flow.** Entry screen (Ask a question / Request a feature / Report a problem, plus
-starter questions for the current context) → chat → **Send this to the team** (always
-visible under the transcript) → review (title and details prefilled from `/summarize`,
-both editable) → sent (shows the host's `message`).
+starter questions for the screen the panel was opened on — `getContext()` is re-read on
+every open) → chat → **Send this to the team** (always visible under the transcript;
+costs one `/summarize` call, a few seconds behind "Summarizing…") → review (title and
+details prefilled from the summary, both editable) → sent (shows the host's `message`).
+**Done** closes the panel and forgets the sent conversation, so the next open lands on
+the entry screen; **Start over** does the same without closing. Closing with **×** or
+Escape mid-conversation keeps the transcript, and the next open resumes it. The panel
+may be mounted already `open`.
 
 **Keyboard.** Enter sends, Shift+Enter inserts a newline, Escape closes when nothing is
 in flight. The scrim and the close button are disabled mid-stream so a stray click
@@ -116,11 +134,16 @@ modal used to carry:
 <AskPanel … footer={<a href="/feedback">View submitted feedback →</a>} />
 ```
 
-**Context.** `getContext` is called once when a conversation opens. Return the screen
-name; return `undefined`/`null`/`""` when there is no meaningful screen (a page without
-a tab, say) and the client **omits the `context` field entirely** — it never sends an
-empty string, so a strict `allowed_contexts` list on the server never sees one. Server
-side, a missing context is always accepted.
+**Context.** `getContext` is called every time the panel is shown (for the entry
+screen's starters) and when a conversation starts (captured as that conversation's
+`context`). Return the screen name; return `undefined`/`null`/`""` when there is no
+meaningful screen (a page without a tab, say) and the client **omits the `context` field
+entirely** — it never sends an empty string, so a strict `allowed_contexts` list on the
+server never sees one. Server side, a missing context is always accepted. Starters are
+looked up by exact string on the server, so if `getContext` returns `location.pathname`
+key the server's `starters` by those paths (or map routes to screen keys client-side —
+see configuration.md → "Screen keys vs. route paths"). Because it is read on open, a
+ref-based `getContext` needs no remounting when the screen changes.
 
 **Strings.** Every visible string is in `labels`; import `defaultLabels` to see the
 full list. The header is composed as `"<product_name> · <labels.title>"` by default

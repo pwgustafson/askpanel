@@ -108,8 +108,12 @@ config = AskPanelConfig(..., user_dependency=current_admin)
 ```
 
 Whatever it returns is handed, untouched, to `on_escalate`, `quota`, and `on_turn`. The
-module never reads it — it doesn't know or care whether it's an ORM row, a dataclass, or
-a dict.
+module never reads it — it doesn't know or care whether it's an ORM row, a dataclass, a
+string, or `None`. **No user object at all** (identity is a header set by a proxy, say)?
+Either return what you have — `def current_user(request: Request) -> str | None:
+return getattr(request.state, "cf_email", None)` — or return `None` and take the
+`request` as `on_escalate`'s third parameter. `DailyTurnCap`'s default key is
+`str(user)`, so with `None` users pass `key=` explicitly.
 
 The router never accepts identity from the request body, and the assistant never sees
 the user object: only the corpus and the transcript go to the model.
@@ -171,6 +175,11 @@ def on_escalate(payload, user, request: Request) -> EscalationResult:
     ...
 ```
 
+`payload.kind` is one of exactly `"question"`, `"feature"`, `"bug"` (the panel's three
+entries); a host with its own vocabulary maps it here. `payload.context` is whatever
+the panel's `getContext()` returned — a screen key or a route — so pick something your
+triage view can read.
+
 There is no way to declare extra `Depends()` on the sink — the router owns the route
 signature — but between `user` (already resolved through your dependency), `request`,
 and opening a session yourself, every host we've seen is covered. If you have a
@@ -202,6 +211,9 @@ be empty.
 2. **One free-text field and no title column**: store `payload.as_text()` (title, blank
    line, details). `EscalationPayload.split_text(text)` gets `(title, details)` back, and
    `<AskPanelTranscript>` recognises the folded-in title when you feed it such a row.
+   Know what you give up: you keep the title and the user-edited summary text, but
+   `summary.already_supported`, `summary.mode`, and the transcript are gone unless you
+   also store `payload.model_dump()` (add the JSON column when you can).
 
 Folding the title into `details` *and* keeping it elsewhere makes it show twice — that
 was the mistake the 0.1.2 docs invited.
@@ -402,13 +414,25 @@ To turn one mode off: `modes={"help"}`.
 
 ## The provider
 
-The default `AnthropicProvider()` reads `ANTHROPIC_API_KEY` and uses `claude-sonnet-5`.
-Customise it:
+The default `AnthropicProvider()` reads `ANTHROPIC_API_KEY` — once, when it is
+constructed, i.e. when you build the config, so the variable must be set before
+`app.main` is imported (tests: `monkeypatch` the env *before* building the config, or
+just pass `api_key=`) — and uses `claude-sonnet-5`. Customise it:
 
 ```python
 from askpanel import AnthropicProvider
-provider=AnthropicProvider(model="claude-sonnet-5", max_tokens=1024, timeout=45.0)
+provider = AnthropicProvider(
+    api_key=settings.ANTHROPIC_API_KEY or None,     # from your settings, not the environment
+    model=settings.CLAUDE_MODEL,                    # the id your product already pins
+    max_tokens=1500,
+    timeout=45.0,
+    request_options={"output_config": {"effort": "low"}},   # any Messages API parameter
+)
 ```
+
+`request_options` is merged into every `messages.stream`/`messages.create` call, so
+effort, thinking, `stop_sequences`, etc. pass straight through; `summary_request_options`
+overrides it for `/summarize` alone.
 
 Or supply your own: any object with `stream(system_blocks, messages)` yielding text and
 `complete(system_blocks, messages)` returning text. `system_blocks` is a list of
@@ -455,8 +479,16 @@ assert "Never discuss pricing" in blocks[1]["text"]                  # extra_ins
 assert messages[0]["content"].startswith("[Screen: Albums]")        # context was prepended
 ```
 
+`StubProvider(configured=False)` exercises the **disabled** path (`/status` says
+`enabled: false`, `/chat` and `/summarize` 503, `/escalate` still works) without
+touching the environment. Errors are plain `HTTPException`s — the body is
+`{"detail": "…"}` (or your app's handler's shape) with no machine-readable code; wrap
+the router if you need one.
+
 Things worth a test in the host: the auth dependency denies anonymous users on all four
-endpoints; an escalation writes the row you expect with the transcript attached; a
+endpoints — `GET {base}/status`, `POST {base}/chat`, `POST {base}/summarize`,
+`POST {base}/escalate` (spell them out; `app.routes` doesn't list an included router's
+paths on current FastAPI); an escalation writes the row you expect with the transcript attached; a
 cross-tenant user can't see another tenant's context (if contexts are tenant-specific).
 
 ## Multi-tenant hosts

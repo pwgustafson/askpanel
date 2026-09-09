@@ -25,27 +25,37 @@ for the design and [`CHANGELOG.md`](CHANGELOG.md) for what changed.
 
 ### 1. Install both packages
 
-Until this is published, install from a checkout:
+**Straight from GitHub, no checkout** (what you want in a `requirements.txt` or a
+Dockerfile until the packages are published):
 
 ```bash
-# Python — from your app's directory
-uv add /path/to/askpanel/python          # or: pip install /path/to/askpanel/python
-# editable, if you plan to change it:   uv add --editable /path/to/askpanel/python
+# Python — pip builds the wheel from the archive; works in python:3.12-slim (no git needed)
+pip install "askpanel @ https://github.com/pwgustafson/askpanel/archive/main.tar.gz#subdirectory=python"
+#   pin a commit instead of main:  …/archive/<sha>.tar.gz#subdirectory=python
+#   uv:  uv add "askpanel @ https://github.com/pwgustafson/askpanel/archive/<sha>.tar.gz#subdirectory=python"
 
-# React — build once, then install the local path
-(cd /path/to/askpanel/js && npm install && npm run build)
-npm install /path/to/askpanel/js         # or: npm install ../askpanel/js
+# React — npm cannot install a subdirectory of a git repo, so pack a tarball once:
+git clone --depth 1 https://github.com/pwgustafson/askpanel /tmp/askpanel
+(cd /tmp/askpanel/js && npm install && npm pack)          # builds, writes askpanel-react-0.1.5.tgz
+mkdir -p vendor && mv /tmp/askpanel/js/askpanel-react-0.1.5.tgz vendor/
+npm install ./vendor/askpanel-react-0.1.5.tgz             # → "file:vendor/askpanel-react-0.1.5.tgz"
 ```
 
-Once published: `uv add askpanel` and `npm install @askpanel/react`.
+Commit `vendor/`. In a Dockerfile that copies `package.json` + lockfile and installs
+before copying the rest, add `COPY vendor/ ./vendor/` **before** `npm install` — the
+lockfile points at the tarball.
 
-> `npm install <local path>` symlinks the package; it does **not** run its build. Run
-> `npm run build` in `js/` first (and again after pulling changes), and add
-> `resolve.dedupe: ["react", "react-dom"]` to your Vite config so the symlink doesn't
-> pull a second React. For Docker/CI, `npm pack` in `js/` (builds automatically) and
-> install the `.tgz`; for Python, `uv build` and vendor the wheel in `requirements.txt`.
-> Both recipes: [`docs/integrations/react.md`](docs/integrations/react.md#install) and
-> [`docs/integrations/fastapi.md`](docs/integrations/fastapi.md#install).
+**From a local checkout** (hacking on the package itself):
+
+```bash
+uv add --editable /path/to/askpanel/python              # or: pip install -e /path/to/askpanel/python
+(cd /path/to/askpanel/js && npm install && npm run build)
+npm install /path/to/askpanel/js                         # symlink; needs dist/ built first
+```
+
+A symlinked install can resolve a second React ("Invalid hook call"): add
+`resolve.dedupe: ["react", "react-dom"]` to your Vite config. Not needed for the
+tarball install. Once published: `uv add askpanel` and `npm install @askpanel/react`.
 
 ### 2. Write a corpus
 
@@ -59,11 +69,13 @@ help/
 ```
 
 Each file starts with a `# Title` line. Then run the linter — it fails on
-implementation words your users don't say (`api`, `database`, `deploy`, …):
+implementation words your users don't say (`api`, `database`, `deploy`, …; whole-word,
+case-insensitive):
 
 ```bash
 askpanel lint help/
-askpanel prompt help/ --product "Orchard"     # the assembled prompt + token estimate
+askpanel prompt help/ --product "Orchard" | less    # the assembled prompt on stdout…
+askpanel prompt help/ --product "Orchard" >/dev/null # …and the character/token estimate on stderr
 ```
 
 Read [`docs/corpus-guide.md`](docs/corpus-guide.md) before writing more than a page.
@@ -127,9 +139,12 @@ export function HelpButton({ currentTab }: { currentTab: string }) {
 }
 ```
 
-That's the whole integration. Theme it with `--askpanel-*` CSS variables (set them on
-`:root`), replace any string with `labels`, or drop the default UI and use the
-`useAskPanel` hook.
+That's the whole integration. `getContext()` is read every time the panel opens: it
+picks the starters shown on the entry screen and is prepended to the conversation as
+`[Screen: …]`. "Send this to the team" makes one `/summarize` call (a few seconds,
+"Summarizing…") before the editable review step, then `/escalate` hands the result to
+your `on_escalate`. Theme it with `--askpanel-*` CSS variables (set them on `:root`),
+replace any string with `labels`, or drop the default UI and use the `useAskPanel` hook.
 
 ### What a host ends up writing
 

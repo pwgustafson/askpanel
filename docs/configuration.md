@@ -42,7 +42,7 @@ app.include_router(create_router(config), prefix="/api/askpanel")
 | Option | Type | What it does |
 |---|---|---|
 | `product_name` | `str` | Used in the prompts ("the help assistant for Orchard") and returned by `/status`. |
-| `user_dependency` | FastAPI dependable | Your existing `current_user`. Guards every endpoint; its return value is passed to `on_escalate`, `quota`, and `on_turn`. Raise `HTTPException(401)` from it to deny. |
+| `user_dependency` | FastAPI dependable | **Required.** Your existing `current_user`. Guards every endpoint; its return value — an object, a string, or `None`, the router never inspects it — is passed to `on_escalate`, `quota`, and `on_turn`. Raise `HTTPException(401)` from it to deny. With no user object, return whatever identity you have (`request.state.email`) or `None`; note `DailyTurnCap`'s default key would then be the same for everyone — pass `key=`. |
 | `on_escalate` | `(payload, user[, request]) -> EscalationResult` — `async def` **or** plain `def` | The only place data leaves the module. A plain `def` runs in Starlette's threadpool (like a sync route), so a blocking ORM commit is fine. Declare a third parameter named `request` to also receive the `fastapi.Request`. May return an `EscalationResult`, a `dict`, a `str` (becomes `message`), or `None` (ok). |
 | `corpus_dir` **or** `corpus_text` | `str \| Path` / `str` | The markdown corpus: a directory of `*.md` joined in filename order, or the already-joined text. |
 
@@ -62,7 +62,7 @@ corpus_dir="app/help"                                # or corpus_text=open("help
 | `extra_instructions` | `str` | `""` | Product-specific guidance appended to the help and interview prompts (tone, what not to discuss). Not applied to summarize. |
 | `interview_agenda` | `list[str]` | the five default questions | The questions the interview walks through, in order. |
 | `interview_max_turns` | `int` | `6` | After this many assistant turns the interview stops asking and offers the summary. Before offering it, the assistant always asks what done looks like if that hasn't been said. |
-| `starters` | `dict[str, list[str]]` | `{}` | Suggested first questions per context, served by `/status`. The key `"*"` is the fallback the React hook uses when no context matches. |
+| `starters` | `dict[str, list[str]]` | `{}` | Suggested first questions per context, served by `/status`; there are no client-side starters. Lookup is by **exact** string equality with what the panel's `getContext()` returned at open; `"*"` is the fallback. See "Context" below for route-path hosts. |
 
 ```python
 modes={"help"}                                       # help chat only, no interview
@@ -104,6 +104,21 @@ allowed_contexts=["Albums", "People", "Sharing", "Settings"]
 context_validator=lambda c: c.startswith("/") and len(c) < 80
 ```
 
+**Screen keys vs. route paths.** Starters are matched by exact string, so decide what
+`getContext()` returns and key everything by it. Two workable shapes:
+
+- *Screen keys* (`"history"`, `"dashboard"`): `allowed_contexts=[…keys…]`, `starters`
+  keyed the same, and the client maps `location.pathname` → key (rightmost match wins for
+  nested routes). Best when several routes are one screen and for readable
+  `payload.context` in triage.
+- *Route paths* (`"/albums/12"`): `context_validator=lambda c: c.startswith("/")`, and
+  either key starters by the exact paths users land on or accept the `"*"` fallback for
+  parameterised routes.
+
+A SPA that already owns a starters registry (a JSON file the `?` icons key into) should
+move that file next to the corpus and load it into `starters=` on the server; the client
+can keep importing the same file for its route→key map so the two never drift.
+
 ### Limits and cost
 
 | Option | Type | Default | What it does |
@@ -142,17 +157,20 @@ intended way to build a cap; a request that is 429'd never reaches `on_turn`.
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
-| `provider` | `Provider` | `AnthropicProvider()` | The model. `AnthropicProvider(api_key=None, model="claude-sonnet-5", max_tokens=1024, summary_max_tokens=1024, timeout=60.0)` reads `ANTHROPIC_API_KEY` when `api_key` is omitted; `configured` is true whenever a key string is present. `check()` → `ProviderCheck(ok, model, error)` validates key + model id with one free request. Prefer passing the model id your product already pins. `StubProvider(...)` for tests. Anything with `stream(system_blocks, messages) -> Iterator[str]` and `complete(system_blocks, messages) -> str` works. |
+| `provider` | `Provider` | `AnthropicProvider()` | The model. `AnthropicProvider(api_key=None, model="claude-sonnet-5", max_tokens=1024, summary_max_tokens=1024, timeout=60.0, request_options=None, summary_request_options=None)` reads `ANTHROPIC_API_KEY` when `api_key` is omitted — **once, at construction** (when you build the config), not per request; pass `api_key=settings.ANTHROPIC_API_KEY` to take it from your own settings. `configured` is true whenever a key string is present. `request_options` is merged into every Messages API call for parameters the class does not model (`{"output_config": {"effort": "low"}}`, `{"thinking": {"type": "adaptive"}}`); `summary_request_options` overrides it for `/summarize` only. `check()` → `ProviderCheck(ok, model, error)` validates key + model id with one free request. Prefer passing the model id your product already pins. `StubProvider(...)` for tests. Anything with `stream(system_blocks, messages) -> Iterator[str]` and `complete(system_blocks, messages) -> str` works. |
 
 ```python
-provider=AnthropicProvider(model="claude-opus-5", max_tokens=2048)
+provider=AnthropicProvider(api_key=settings.ANTHROPIC_API_KEY, model="claude-opus-5", request_options={"output_config": {"effort": "low"}})
 provider=StubProvider(chunks=["Hi ", "there"], completion='{"title": "T", "problem": "p"}')   # tests
+provider=StubProvider(configured=False)                                                        # tests: the disabled path
 ```
 
 Optional provider extras the router uses when present: a `configured` attribute
 (`False` → the module disables itself), `complete_with_usage()` returning
 `(text, Usage)`, and a `stream()` generator that `return`s a `Usage`.
 
+`StubProvider(configured=False)` makes the module report itself disabled (`enabled`
+false, 503s) without touching the environment — the way to test the disabled path.
 `StubProvider.calls: list[ProviderCall]` records every call as a named tuple
 `ProviderCall(op, system_blocks, messages)` — `op` is `"stream"` or `"complete"`,
 `system_blocks` the list of `{"type": "text", "text": …}` blocks (index 0 is the cached
@@ -236,7 +254,7 @@ const panel = useAskPanel({ base: "/api/askpanel", getContext: () => location.pa
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `base` | `string` | required | Where the router is mounted. |
-| `getContext` | `() => string \| undefined` | none | Returns the current screen. Captured once, when `open()` is called. A falsy result (`undefined`, `null`, `""`) means **no `context` field is sent at all**, which every server accepts regardless of `allowed_contexts`. Results are truncated to 200 chars. |
+| `getContext` | `() => string \| undefined` | none | Returns the current screen. Read at every `open(mode)` (captured as the conversation's `context`) and, via `refreshContext()`, every time `<AskPanel>` is shown — so the entry screen's starters follow the screen the panel is opened on. Also read once when `/status` resolves, so a ref-based implementation should be valid at mount. A falsy result (`undefined`, `null`, `""`) means **no `context` field is sent at all**, which every server accepts regardless of `allowed_contexts`. Results are truncated to 200 chars. |
 | `protocolMismatch` | `(serverVersion: string) => void` | none | Called when the server answers with a different `X-AskPanel-Protocol`. The request also rejects. |
 | `fetch` | `(url, init) => Promise<Response>` | `globalThis.fetch` | Substitute fetch (tests, custom auth wrappers). |
 | `headers` | `HeadersInput \| (() => HeadersInput \| undefined \| null)` | none | Extra headers on every request. `HeadersInput` = any `HeadersInit` or a record whose values may be `undefined`/`null` (dropped), so `{ Authorization: token ? \`Bearer ${token}\` : undefined }` type-checks under `strict`. Functions are read per request. |
@@ -285,7 +303,8 @@ skipStatus: true, enabled: me.features.askpanel      // host already knows the f
 | `summarize()` | POST `/summarize` with the transcript; resolves the `SummaryOut` (or `null` on error). |
 | `escalate({kind, title, details})` | POST `/escalate` with transcript, context, and summary; resolves the result. Works with an empty transcript. |
 | `reset()` | Forget everything except `status`. |
-| `refreshStatus()` | Re-probe `/status`. |
+| `refreshStatus()` | Re-probe `/status`, bypassing the memo. |
+| `refreshContext()` | Re-read `getContext()` for the entry screen's `starters` (the panel does this on every open). |
 | `client` | The underlying `AskPanelClient` for custom flows. |
 
 ## React: `useAskPanelStatus(options)`
@@ -368,7 +387,7 @@ variables, not the OS:
 :root {
   --askpanel-bg: #fff;          --askpanel-fg: #1a1a1a;       --askpanel-muted: #6b6b6b;
   --askpanel-border: #e2e2e2;   --askpanel-accent: #2b5fd9;   --askpanel-accent-fg: #fff;
-  --askpanel-surface: #f5f5f7;  --askpanel-user-bg: #e8effc;
+  --askpanel-surface: #f5f5f7;  --askpanel-user-bg: #e8effc;  --askpanel-user-fg: var(--askpanel-fg);
   --askpanel-error-bg: #fde8e8; --askpanel-error-fg: #9b1c1c;
   --askpanel-scrim: rgba(0,0,0,.35); --askpanel-radius: 10px;  --askpanel-width: 420px;
   --askpanel-font: system-ui, sans-serif; --askpanel-font-size: 14px;
@@ -386,6 +405,7 @@ variables, not the OS:
 | `--askpanel-accent-fg` | `#ffffff` | text on accent buttons |
 | `--askpanel-surface` | `#f5f5f7` | assistant bubbles, starters, hover |
 | `--askpanel-user-bg` | `#e8effc` | user bubbles |
+| `--askpanel-user-fg` | `var(--askpanel-fg)` | text in user bubbles (set both for a solid accent bubble: `--askpanel-user-bg: #2563eb; --askpanel-user-fg: #fff`) |
 | `--askpanel-error-bg` / `--askpanel-error-fg` | `#fde8e8` / `#9b1c1c` | error banner |
 | `--askpanel-scrim` | `rgba(0,0,0,.35)` | backdrop |
 | `--askpanel-radius` | `10px` | corners |
