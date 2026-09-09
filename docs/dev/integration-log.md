@@ -140,56 +140,62 @@ Format:
 
 ## AP-13 — `StubProvider.calls` entries are undocumented tuples
 - **From:** drovio  **Date:** 2026-09-08  **Area:** docs | python
-- **Status:** open
+- **Status:** fixed (v0.1.2)
 - **What I tried:** Followed the fastapi guide's "Testing your integration": "Every call is recorded in `provider.calls` so you can assert on the exact blocks and messages the model would have seen."
 - **What happened / what was unclear:** The shape is not stated anywhere. I guessed dicts/objects, wrote a defensive test, and it failed with `'tuple' object has no attribute 'system_blocks'`. A probe shows `("stream" | "complete", system_blocks, messages)`.
 - **What I expected:** One line in the testing section: `calls: list[tuple[str, list[dict], list[dict]]]` with an example assertion (`op, blocks, messages = provider.calls[0]`), or a small named tuple so the fields have names.
-- **Builder:**
+- **Builder:** `StubProvider.calls` is now `list[ProviderCall]`, a named tuple `ProviderCall(op, system_blocks, messages)` — `op` is `"stream"` or `"complete"`, `system_blocks` the list of `{"type","text",…}` blocks (index 0 = cached corpus block), `messages` the `{"role","content"}` dicts. Tuple unpacking (`op, blocks, messages = provider.calls[0]`) keeps working; `provider.calls[0].op` works too. `ProviderCall` is exported top-level. The fastapi guide's "Testing your integration" now shows the shape with four example assertions, and `docs/configuration.md` → "Provider" repeats it.
+
 
 ## AP-14 — Bullet lists render without markers under a Tailwind host (preflight resets `list-style`)
 - **From:** drovio  **Date:** 2026-09-08  **Area:** react
-- **Status:** open
+- **Status:** fixed (v0.1.2)
 - **What I tried:** Asked "How do I share a collection with a campus?" in the mounted panel; the answer ends with "A couple of notes:" followed by two `- ` bullets.
 - **What happened / what was unclear:** The bullets render as two indented lines with no marker. Drovio's Tailwind v4 preflight sets `ul { list-style: none; margin: 0; padding: 0 }` globally, and `styles.css` relies on the browser default for `.askpanel ul`. Any Tailwind/normalize host will see the same.
 - **What I expected:** The stylesheet to own its list styling (`.askpanel-prose ul { list-style: disc; padding-left: 1.25em; margin: .5em 0 }`), since "no Tailwind" on the package side does not mean the host has none.
-- **Builder:**
+- **Builder:** Right — "no Tailwind in the package" said nothing about the host. `styles.css` now owns list rendering: `.askpanel-prose ul { list-style: disc outside; padding-left: 1.25em; margin: 0 0 8px }` and `.askpanel-prose li { display: list-item; list-style: disc outside }`, plus explicit heading colour/line-height and `strong` weight so preflight's `h2 { font-size: inherit }` / `ul { list-style: none; padding: 0 }` can't reach in. Verified the rule set against Tailwind v4's preflight source; the react guide's "Theming" now says the stylesheet owns everything it renders and what to check if a reset still wins (import order).
+
 
 ## AP-15 — `labels.title` is appended to `product_name`, not a replacement
 - **From:** drovio  **Date:** 2026-09-08  **Area:** react | docs
-- **Status:** open
+- **Status:** fixed (v0.1.2)
 - **What I tried:** `labels={{ title: "Drovio help" }}` following the react guide's `labels={{ title: "Ask Orchard", … }}` example.
 - **What happened / what was unclear:** The header reads "Drovio · Drovio help" — the panel prefixes the server's `product_name` and a middle dot. Nothing in the docs says the title is a suffix.
 - **What I expected:** Either `title` replaces the whole header, or the docs show the composed form and name the separator/product part as its own label (`headerProduct`?) so a host can drop it.
-- **Builder:**
+- **Builder:** `labels.title` now replaces the whole header (and the dialog's `aria-label`). The default header is still composed as `"<product_name> · Help"` from `/status` when you don't set it. So `labels={{ title: "Drovio help" }}` renders exactly "Drovio help". Documented in the react guide → "Strings" and the `labels` row of `docs/configuration.md`, with the composed default spelled out. No `headerProduct` label — replacing the whole string is simpler and covers every case.
+
 
 ## AP-16 — Opening the panel scrolls the host page to the bottom
 - **From:** drovio  **Date:** 2026-09-08  **Area:** react
-- **Status:** open
+- **Status:** fixed (v0.1.2)
 - **What I tried:** Clicked the sidebar trigger on the Collections tab (a page longer than the viewport) in Chrome, twice, from the top of the page.
 - **What happened / what was unclear:** Both times the panel opened correctly but the page behind it jumped to the bottom of the list. Closing did not scroll back. Most likely a `focus()` on the aside/textarea without `{ preventScroll: true }`, or the `fixed` aside being scrolled into view.
 - **What I expected:** The page to stay where it was; the panel is `position: fixed` so it never needs scrolling into view.
-- **Builder:**
+- **Builder:** Your diagnosis was right: the chat view called `textarea.focus()` with no options, and Chrome scrolls the document to a focused element's DOM position even inside a `position: fixed` ancestor (the panel sits at the end of your DOM, so: bottom of the page). Every focus the panel makes now passes `{ preventScroll: true }` — the textarea in chat, and on open the aside itself (`tabIndex=-1`) so Escape works without a click. Nothing is ever `scrollIntoView`'d; the only scrolling is the transcript's own `scrollTop`. A test spies on `HTMLElement.prototype.focus` and asserts every call carries `preventScroll`. (Closing not scrolling back is expected — there was nothing to restore; with the fix the page never moves.)
+
 
 ## AP-17 — Interview mode answers from the corpus instead of running the agenda, and the summary then says "Outcome: Not specified"
 - **From:** drovio  **Date:** 2026-09-08  **Area:** python (prompts) | docs
-- **Status:** open
+- **Status:** fixed (v0.1.2)
 - **What I tried:** Real-model interview, three turns: "I want to put the same asset into two collections without uploading it twice" → "Right now I upload the file again…" → "Our campus communications team — about four people — hit this every campaign."
 - **What happened / what was unclear:** The assistant explained **Add existing** from the corpus and asked "Does that solve it?" three turns in a row (one question per turn, good), never reaching "what would done look like". `/summarize` then produced `outcome: ""` and the review text shows "**Outcome:** Not specified." Honestly, short-circuiting a request the product already satisfies is the *right* behaviour — but it isn't documented, and the summary shape doesn't reflect that the request may be "already possible; user was shown how".
 - **What I expected:** The corpus guide / configuration doc to say the interview may resolve a request from the corpus first, and the summary to either omit empty sections or carry a field like `already_supported: bool` so the host's triage can file it as a question instead of a feature.
-- **Builder:**
+- **Builder:** Two things. **Prompt:** the interview now says the corpus-covers-it explanation *once*; "does that solve it?" is never asked twice; a reply that describes the problem further (like your "Right now I upload the file again…") counts as "no" and the agenda continues; and before offering the summary the assistant must ask what done looks like if it hasn't been said. **Summary:** `SummaryOut` gains `already_supported: bool` (additive; protocol stays v1, `docs/protocol.md` updated in the same commit) — true when the product already does it and the person didn't say it falls short — so triage can file it as a question. Empty fields are `""` (the prompt forbids "not specified"-style placeholders, and the server normalises any that slip through), and the rendered `summary` omits empty sections. The behaviour is documented under `docs/configuration.md` → "Interview behaviour", the corpus guide ("The corpus shapes the feature interview too"), and the fastapi guide's "Triage hint".
+
 
 ## AP-18 — Help-mode escalations get a feature-request-shaped summary
 - **From:** drovio  **Date:** 2026-09-08  **Area:** python (prompts)
-- **Status:** open
+- **Status:** fixed (v0.1.2)
 - **What I tried:** Asked a help question, got a good answer, clicked "Send this to the team".
 - **What happened / what was unclear:** The review step prefilled "**Problem:** Person wanted to know how to share a collection with a campus. **Workaround:** None mentioned. **Outcome:** Wanted to know the steps…" — the interview template applied to a question. That text is what lands in the triage list (raw `**` and all, since hosts render `details` as plain text).
 - **What I expected:** A question-shaped summary for `mode: "help"` ("What they asked / what the assistant said / what is still unclear"), and either no markdown emphasis in `summary.summary` or a documented note that hosts should render it.
-- **Builder:**
+- **Builder:** `/summarize` is now mode-aware. For `mode: "help"` the model gets a question-shaped prompt and the fields mean: `problem` = what they asked / were trying to do, `workaround` = what the assistant could answer from the guide, `outcome` = what is still unanswered (`""` if fully answered), `already_supported` = the guide answered it fully. Field *names* are unchanged so the wire format stays v1; `docs/protocol.md` annotates the per-mode meaning. And `summary` is now rendered **server-side as plain text** in every mode — `What they asked: … / What the guide covered: … / Still unanswered: …` (help) or `Problem: … / Current workaround: … / What done looks like: …` (interview), paragraphs separated by blank lines, no `**`, empty sections omitted; the model's own `summary` field is ignored. So what lands in your triage list is exactly what the reviewer saw and edited, with no markup.
+
 
 ## AP-19 — Does `<AskPanel skipStatus>` still show the chat entries?
 - **From:** drovio  **Date:** 2026-09-08  **Area:** docs | react
-- **Status:** open
+- **Status:** fixed (v0.1.2)
 - **What I tried:** The fastapi guide says: surface `config.enabled` on your `/me` and "skip the panel's probe with `skipStatus`". The configuration doc says the hook's `enabled` is `status?.enabled ?? false` and the panel hides chat entries when `enabled` is false.
 - **What happened / what was unclear:** Read together, `skipStatus` on the default panel would leave `status` null and hide the entries — so I left the probe on (one extra GET per page load) rather than test it. Also `starters` come from `/status`, so skipping it loses them.
 - **What I expected:** The doc to say what `skipStatus` means for `<AskPanel>` (probably: "hook-only; the default panel needs the probe for starters and modes"), or an `enabled` prop the host can pass from `/me`.
-- **Builder:**
+- **Builder:** You read it correctly, and it was a real gap: with `skipStatus` the 0.1.1 panel hid the chat entries. 0.1.2 adds an `enabled` option to the hook (passed through by the panel): `<AskPanel skipStatus enabled={me.features.askpanel} />` shows the entries without the GET, assumes both modes, and has no starters (they only come from `/status`); once `/status` does answer it wins. The recommendation in both docs is now explicit: most hosts should leave the probe on — one cheap GET, and it's where starters and the mode list come from — and `skipStatus` is for hosts that don't use starters. `docs/configuration.md` (hook options + panel table) and the react guide → "Skipping the probe".
