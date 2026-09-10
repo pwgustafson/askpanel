@@ -16,3 +16,9 @@ import "@askpanel/react/styles.css";
 ```
 
 See the repository `docs/integrations/react.md` and `docs/configuration.md`.
+
+**Why:** as more of a product is built by AI agents, the humans on the team stop being
+able to answer "how does this work" and "what would it take to add that" from memory.
+AskPanel lets the same approach explain the product: an assistant that answers only from
+a short corpus written in your users' words, and turns "it doesn't do that" into a
+structured feature request with the whole conversation attached.
