@@ -1,5 +1,9 @@
 # AskPanel
 
+[![PyPI](https://img.shields.io/pypi/v/askpanel?label=askpanel%20on%20PyPI)](https://pypi.org/project/askpanel/)
+[![npm](https://img.shields.io/npm/v/%40askpanel%2Freact?label=%40askpanel%2Freact%20on%20npm)](https://www.npmjs.com/package/@askpanel/react)
+[![CI](https://github.com/pwgustafson/askpanel/actions/workflows/ci.yml/badge.svg)](https://github.com/pwgustafson/askpanel/actions/workflows/ci.yml)
+
 In-app help chat and guided feature requests for any web product, grounded **only** in a
 markdown corpus you write. One panel, two jobs:
 
@@ -13,11 +17,11 @@ markdown corpus you write. One panel, two jobs:
 Both end in **escalation**: a structured payload handed to a callback you write. The
 module stores nothing; the browser holds the transcript.
 
-- Python package `askpanel` — a FastAPI router (`python/`)
-- npm package `@askpanel/react` — a headless hook and a default panel (`js/`)
+- Python package [`askpanel`](https://pypi.org/project/askpanel/) — a FastAPI router (`python/`)
+- npm package [`@askpanel/react`](https://www.npmjs.com/package/@askpanel/react) — a headless hook and a default panel (`js/`)
 - A [documented wire protocol](docs/protocol.md) so either half can be swapped out
 
-**Status:** v0.1.5 — integrated end to end in three host applications (cookie-session
+**Status:** v0.1.6, published on PyPI and npm — integrated end to end in three host applications (cookie-session
 multi-tenant, JWT single-tenant, and a third adopted from this README alone). See [`SPEC.md`](SPEC.md)
 for the design and [`CHANGELOG.md`](CHANGELOG.md) for what changed.
 
@@ -58,37 +62,17 @@ lookup table for how everything works.
 
 ### 1. Install both packages
 
-**Straight from GitHub, no checkout** (what you want in a `requirements.txt` or a
-Dockerfile until the packages are published):
-
 ```bash
-# Python — pip builds the wheel from the archive; works in python:3.12-slim (no git needed)
-pip install "askpanel @ https://github.com/pwgustafson/askpanel/archive/main.tar.gz#subdirectory=python"
-#   pin a commit instead of main:  …/archive/<sha>.tar.gz#subdirectory=python
-#   uv:  uv add "askpanel @ https://github.com/pwgustafson/askpanel/archive/<sha>.tar.gz#subdirectory=python"
-
-# React — npm cannot install a subdirectory of a git repo, so pack a tarball once:
-git clone --depth 1 https://github.com/pwgustafson/askpanel /tmp/askpanel
-(cd /tmp/askpanel/js && npm install && npm pack)          # builds, writes askpanel-react-0.1.5.tgz
-mkdir -p vendor && mv /tmp/askpanel/js/askpanel-react-0.1.5.tgz vendor/
-npm install ./vendor/askpanel-react-0.1.5.tgz             # → "file:vendor/askpanel-react-0.1.5.tgz"
+uv add askpanel                 # or: pip install askpanel      (Python ≥ 3.11)
+npm install @askpanel/react     # React ≥ 18 peer dependency
 ```
 
-Commit `vendor/`. In a Dockerfile that copies `package.json` + lockfile and installs
-before copying the rest, add `COPY vendor/ ./vendor/` **before** `npm install` — the
-lockfile points at the tarball.
+Then, once, in your app's entry file: `import "@askpanel/react/styles.css";`.
 
-**From a local checkout** (hacking on the package itself):
-
-```bash
-uv add --editable /path/to/askpanel/python              # or: pip install -e /path/to/askpanel/python
-(cd /path/to/askpanel/js && npm install && npm run build)
-npm install /path/to/askpanel/js                         # symlink; needs dist/ built first
-```
-
-A symlinked install can resolve a second React ("Invalid hook call"): add
-`resolve.dedupe: ["react", "react-dom"]` to your Vite config. Not needed for the
-tarball install. Once published: `uv add askpanel` and `npm install @askpanel/react`.
+That's it. Pin them like any other dependency (`askpanel==0.1.6`,
+`"@askpanel/react": "^0.1.6"`). Installing a commit that isn't released yet is covered
+at the end of the integration guides — see
+[Installing an unreleased commit](docs/integrations/fastapi.md#installing-an-unreleased-commit).
 
 ### 2. Write a corpus
 
@@ -197,7 +181,10 @@ Two hosts so far landed at 100–180 lines of their own code plus a corpus and a
 
 ## Try the demo
 
+From a checkout of this repository (the demo runs the packages from source):
+
 ```bash
+git clone https://github.com/pwgustafson/askpanel && cd askpanel
 cd python && uv sync
 (cd ../js && npm install && npm run build)
 (cd ../examples/demo/web && npm install && npm run build)

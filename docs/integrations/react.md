@@ -8,57 +8,20 @@ rest of your product. For the full option list see [configuration.md](../configu
 ## Install
 
 ```bash
-npm install @askpanel/react                 # once published
-
-# from a checkout: build first, then install the path
-(cd /path/to/askpanel/js && npm install && npm run build)
-npm install /path/to/askpanel/js
+npm install @askpanel/react
 ```
 
-`npm install <path>` creates a **symlink** to the folder and does **not** run the
-package's build, so `dist/` must exist. Re-run `npm run build` in `js/` after pulling
-changes.
+Peer dependencies: `react` and `react-dom` ≥ 18. No other runtime dependencies. The
+package is plain ESM with TypeScript declarations, so Vite, Next.js, CRA, and plain
+Rollup all work. Import the stylesheet once, in your entry file:
 
-**The symlink trap.** A symlinked package that imports React can resolve a *second*
-copy of React from its own `node_modules` (the dev dependency it uses for tests), and
-you get "Invalid hook call". Two fixes — pick one:
+```ts
+import "@askpanel/react/styles.css";
+```
 
-1. Tell Vite to dedupe (symlink installs only — a tarball needs nothing):
-
-   ```ts
-   // vite.config.ts
-   export default defineConfig({ resolve: { dedupe: ["react", "react-dom"] } });
-   ```
-
-2. Install a tarball instead of a symlink (recommended for Docker images and CI, and
-   the right shape for `package.json` until the package is on npm):
-
-   ```bash
-   (cd /path/to/askpanel/js && npm pack)                 # runs the build, writes askpanel-react-0.1.1.tgz
-   mkdir -p vendor && mv /path/to/askpanel/js/askpanel-react-0.1.1.tgz vendor/
-   npm install ./vendor/askpanel-react-0.1.1.tgz         # package.json gets "file:vendor/askpanel-react-0.1.1.tgz"
-   ```
-
-   The tarball contains only `dist/` and `package.json`, so there is no second React
-   and `resolve.dedupe` is not needed. Commit `vendor/` (or build it in CI). **Docker
-   layer order:** the lockfile now points at `file:vendor/…tgz`, so a cache-friendly
-   Dockerfile that copies `package.json` + lockfile and installs before copying the rest
-   must add `COPY vendor/ ./vendor/` before `RUN npm ci`:
-
-   ```dockerfile
-   COPY package.json package-lock.json ./
-   COPY vendor/ ./vendor/                 # ← before install
-   RUN npm ci
-   COPY . .
-   ```
-
-   Swap for `"@askpanel/react": "^0.1.5"` once published. This is also the recipe for
-   installing **from GitHub without a checkout** — npm can't install a subdirectory of a
-   git repo, so clone, `npm pack` in `js/`, and vendor the tarball.
-
-Peer dependencies: `react` and `react-dom` ≥ 18. No other runtime dependencies.
-Vite, Next.js, CRA, and plain Rollup all work — the package is plain ESM with
-TypeScript declarations.
+Pin it like any other dependency (`"@askpanel/react": "^0.1.6"`). Need a commit that
+isn't released? See [Installing an unreleased commit](#installing-an-unreleased-commit)
+at the end of this guide.
 
 ## The default panel
 
@@ -397,3 +360,44 @@ stream fails midway — the partial text is in `result.text`.
 | `on_escalate` returned `ok: false` | 200 | The host's `message` |
 
 All strings above come from the server or from `labels` and can be changed.
+
+## Installing an unreleased commit
+
+Only for trying a fix before it ships — released versions come from npm.
+
+**From GitHub, no checkout.** npm can't install a subdirectory of a git repo, so pack a
+tarball from a clone and vendor it:
+
+```bash
+git clone --depth 1 https://github.com/pwgustafson/askpanel /tmp/askpanel      # or checkout a sha
+(cd /tmp/askpanel/js && npm install && npm pack)          # runs the build, writes askpanel-react-<v>.tgz
+mkdir -p vendor && mv /tmp/askpanel/js/askpanel-react-<v>.tgz vendor/
+npm install ./vendor/askpanel-react-<v>.tgz               # package.json gets "file:vendor/askpanel-react-<v>.tgz"
+```
+
+The tarball contains only `dist/` and `package.json`, so there is no second React.
+Commit `vendor/` (or build it in CI). **Docker layer order:** the lockfile now points at
+`file:vendor/…tgz`, so a cache-friendly Dockerfile that copies `package.json` + lockfile
+and installs before copying the rest must add `COPY vendor/ ./vendor/` before `RUN npm ci`:
+
+```dockerfile
+COPY package.json package-lock.json ./
+COPY vendor/ ./vendor/                 # ← before install
+RUN npm ci
+COPY . .
+```
+
+**From a local checkout**, to hack on the package: build first, then install the path.
+
+```bash
+(cd /path/to/askpanel/js && npm install && npm run build)
+npm install /path/to/askpanel/js
+```
+
+`npm install <path>` creates a **symlink** and does **not** run the package's build, so
+`dist/` must exist; re-run `npm run build` in `js/` after pulling changes. A symlinked
+package can resolve a *second* copy of React from its own `node_modules` ("Invalid hook
+call") — add `resolve.dedupe: ["react", "react-dom"]` to your Vite config (symlink
+installs only; a tarball or the npm package needs nothing).
+
+Swap back to `"@askpanel/react": "^<version>"` as soon as the fix is released.

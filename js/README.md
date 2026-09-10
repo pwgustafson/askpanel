@@ -2,7 +2,8 @@
 
 React client for [AskPanel](https://github.com/pwgustafson/askpanel): a headless hook
 (`useAskPanel`) and a drop-in panel (`<AskPanel>`) that talk to an AskPanel server
-(`pip install askpanel`, or any implementation of `docs/protocol.md`).
+([`askpanel` on PyPI](https://pypi.org/project/askpanel/), or any implementation of
+`docs/protocol.md`).
 
 ```bash
 npm install @askpanel/react
@@ -10,9 +11,9 @@ npm install @askpanel/react
 
 ```tsx
 import { AskPanel } from "@askpanel/react";
-import "@askpanel/react/styles.css";
+import "@askpanel/react/styles.css";      // once, in your entry file
 
-<AskPanel base="/api/askpanel" open={open} onOpenChange={setOpen} />
+<AskPanel base="/api/askpanel" open={open} onOpenChange={setOpen} getContext={() => currentScreen} />
 ```
 
 See the repository `docs/integrations/react.md` and `docs/configuration.md`.

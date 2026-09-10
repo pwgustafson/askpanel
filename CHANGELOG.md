@@ -1,6 +1,7 @@
 # Changelog
 
-Both packages (`askpanel` on PyPI-to-be, `@askpanel/react` on npm-to-be) share a version.
+Both packages — [`askpanel`](https://pypi.org/project/askpanel/) on PyPI and
+[`@askpanel/react`](https://www.npmjs.com/package/@askpanel/react) on npm — share a version.
 Protocol version is 1 throughout; every wire change so far has been additive
 (see `docs/protocol.md` → Versioning).
 

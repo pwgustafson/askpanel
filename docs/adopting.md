@@ -3,9 +3,9 @@
 The steps, in the order both host integrations actually did them. Each links to the
 detail. Budget: an afternoon plus the time it takes to write the corpus.
 
-- [ ] **1. Install locally** — `uv add /path/to/askpanel/python` (or `pip install -e`), and
-  `(cd js && npm install && npm run build) && npm install ../askpanel/js` with
-  `resolve.dedupe: ["react", "react-dom"]` in Vite. → README "Install", react.md "Install".
+- [ ] **1. Install** — `uv add askpanel` (or `pip install askpanel`) and
+  `npm install @askpanel/react`; `import "@askpanel/react/styles.css"` once in your entry
+  file. → README "Install", fastapi.md / react.md "Install".
 - [ ] **2. Write the corpus** — one `*.md` per user job, numbered, `# Title` first line, in
   the users' vocabulary; `askpanel lint help/` clean; above ~8k chars
   (`askpanel prompt help/ --product X`). Add `askpanel lint` to CI. → `docs/corpus-guide.md`.
@@ -46,9 +46,9 @@ detail. Budget: an afternoon plus the time it takes to write the corpus.
 - [ ] **14. Tests** — `StubProvider` in the API tests (auth denies anonymous on all four
   endpoints; the sink writes the row with the transcript); mock `fetch` on the client.
   → fastapi.md "Testing your integration".
-- [ ] **15. Vendor for the image** — Python: `uv build`, wheel in `vendor/`,
-  `uv add ./vendor/…whl` (`COPY vendor/` before `uv sync`) or the `requirements.txt`
-  line; JS: `npm pack` → `vendor/*.tgz` → `file:` dependency. → fastapi.md / react.md
-  "Install".
+- [ ] **15. Pin for the image** — `askpanel==<v>` and `"@askpanel/react": "^<v>"`, like
+  any dependency; nothing else to vendor. (Trying an unreleased fix: the archive-URL /
+  `npm pack` recipes under "Installing an unreleased commit" in fastapi.md / react.md,
+  with their Docker layer-order notes.)
 
 Then read the escalations for a week: unanswered questions are the corpus's to-do list.

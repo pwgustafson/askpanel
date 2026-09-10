@@ -8,60 +8,13 @@ with real code. For the full option list see [configuration.md](../configuration
 ## Install
 
 ```bash
-uv add askpanel                       # once published
-uv add /path/to/askpanel/python       # from a checkout (add --editable to hack on it)
-pip install /path/to/askpanel/python  # pip; or -e for editable
+uv add askpanel          # or: pip install askpanel
 ```
 
-Requires Python ≥ 3.11, FastAPI, Pydantic v2, and the `anthropic` SDK (pulled in
-automatically).
-
-**Before it's on PyPI — `requirements.txt` and Docker.** A relative path outside the
-Docker build context won't resolve inside the image. Build a wheel and vendor it:
-
-```bash
-(cd /path/to/askpanel/python && uv build)            # → dist/askpanel-0.1.1-py3-none-any.whl
-mkdir -p vendor && cp /path/to/askpanel/python/dist/askpanel-0.1.1-py3-none-any.whl vendor/
-echo "./vendor/askpanel-0.1.1-py3-none-any.whl" >> requirements.txt
-```
-
-`pip install -r requirements.txt` resolves that path relative to the requirements file,
-and `COPY vendor/ vendor/` in the Dockerfile makes it available in the build. For local
-hacking use `pip install -e ../askpanel/python` in your venv and keep the wheel line for
-the image. Swap the line for `askpanel==0.1.3` once it's published.
-
-**`uv.lock` hosts** (`pyproject.toml` + `uv sync --frozen`): `uv add /path/to/checkout`
-records an absolute path in the lock, which won't exist inside the image. Vendor the
-wheel and add it by relative path — the lock then says `source = { path = "vendor/…" }`:
-
-```bash
-uv add ./vendor/askpanel-0.1.3-py3-none-any.whl
-```
-
-Because uv pins the exact wheel *path*, a version bump is remove-then-add, not
-drop-in-a-new-file:
-
-```bash
-uv remove askpanel && rm vendor/askpanel-0.1.2-*.whl
-uv add ./vendor/askpanel-0.1.3-py3-none-any.whl
-```
-
-And the wheel must be in the image **before** the sync layer, so the Dockerfile order is:
-
-```dockerfile
-COPY pyproject.toml uv.lock ./
-COPY vendor/ vendor/                 # ← before uv sync, after the lockfile
-RUN uv sync --frozen --no-dev
-COPY . .
-```
-
-Building the wheel: `uv build` in `python/` packages whatever is on disk, including
-uncommitted edits. To build exactly a tagged/committed version:
-
-```bash
-git -C /path/to/askpanel archive HEAD python | tar -x -C /tmp/askpanel-build
-(cd /tmp/askpanel-build/python && uv build)      # → dist/askpanel-<version>-py3-none-any.whl
-```
+Requires Python ≥ 3.11; FastAPI, Pydantic v2, and the `anthropic` SDK are pulled in
+automatically. Pin it like any other dependency (`askpanel==0.1.6`). Need a commit that
+isn't released? See [Installing an unreleased commit](#installing-an-unreleased-commit)
+at the end of this guide.
 
 ## Mount
 
@@ -505,3 +458,44 @@ text, so tenants sharing a corpus share the cache.
 `X-Accel-Buffering: no` so nginx doesn't buffer it. If your proxy strips headers, make
 sure `X-AskPanel-Protocol` survives — the client tolerates its absence but uses it to
 detect version mismatches.
+
+## Installing an unreleased commit
+
+Only for trying a fix before it ships — released versions come from PyPI.
+
+**Straight from GitHub, no checkout** (`requirements.txt`, `pyproject.toml`, or a
+Dockerfile): pip/uv build the wheel from the archive, and no `git` binary is needed, so
+this works in `python:3.12-slim`:
+
+```bash
+pip install "askpanel @ https://github.com/pwgustafson/askpanel/archive/<sha>.tar.gz#subdirectory=python"
+uv add      "askpanel @ https://github.com/pwgustafson/askpanel/archive/<sha>.tar.gz#subdirectory=python"
+```
+
+(`main.tar.gz` instead of `<sha>.tar.gz` tracks the branch; pin a sha for builds.)
+
+**From a local checkout**, to hack on the package: `uv add --editable /path/to/askpanel/python`
+or `pip install -e /path/to/askpanel/python`. A relative path outside the Docker build
+context won't resolve inside an image, so for an image build a wheel and vendor it:
+
+```bash
+git -C /path/to/askpanel archive HEAD python | tar -x -C /tmp/askpanel-build   # a clean tree, not your edits
+(cd /tmp/askpanel-build/python && uv build)                                    # → dist/askpanel-<v>-py3-none-any.whl
+mkdir -p vendor && cp /tmp/askpanel-build/python/dist/askpanel-*.whl vendor/
+echo "./vendor/askpanel-<v>-py3-none-any.whl" >> requirements.txt              # pip hosts
+uv add ./vendor/askpanel-<v>-py3-none-any.whl                                  # uv.lock hosts
+```
+
+`pip install -r requirements.txt` resolves that path relative to the requirements file.
+uv records `source = { path = "vendor/…" }` and pins the exact wheel path, so a bump is
+`uv remove askpanel && rm vendor/old.whl && uv add ./vendor/new.whl`. Either way the
+wheel must be in the image **before** the install layer:
+
+```dockerfile
+COPY pyproject.toml uv.lock ./
+COPY vendor/ vendor/                 # ← before uv sync / pip install, after the lockfile
+RUN uv sync --frozen --no-dev
+COPY . .
+```
+
+Swap back to `askpanel==<version>` as soon as the fix is released.
