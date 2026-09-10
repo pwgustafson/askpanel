@@ -17,9 +17,42 @@ module stores nothing; the browser holds the transcript.
 - npm package `@askpanel/react` — a headless hook and a default panel (`js/`)
 - A [documented wire protocol](docs/protocol.md) so either half can be swapped out
 
-**Status:** v0.1.4 — integrated end to end in two host applications (cookie-session
-multi-tenant, and JWT single-tenant). Private until published. See [`SPEC.md`](SPEC.md)
+**Status:** v0.1.5 — integrated end to end in three host applications (cookie-session
+multi-tenant, JWT single-tenant, and a third adopted from this README alone). See [`SPEC.md`](SPEC.md)
 for the design and [`CHANGELOG.md`](CHANGELOG.md) for what changed.
+
+## Why this exists
+
+More and more of the code in a product is written by AI agents. That is the point of
+using them: features land in hours instead of weeks. But every feature an agent builds
+is one more thing a human has to explain later, and the humans are no longer the ones
+who wrote it. Ask a founder three months in how a particular screen actually behaves,
+or what it would take to add the thing a customer just asked for, and the honest answer
+is often "I'd have to go read what the agent built."
+
+That context burden grows with every feature, and it lands in two places: on the
+customer, who has a question and no one who can answer it quickly, and on the team,
+who receive feature requests without the context to judge them. Neither scales with a
+codebase that grows faster than anyone can hold in their head.
+
+If the agents are building the product, it is a reasonable next step to let the same
+approach explain the product. AskPanel is that step:
+
+- **The corpus is written from the product as it is.** Short markdown files, in the
+  users' words, describing what each part of the app does and what happens when you use
+  it. The agent that built a feature can write its entry; a linter keeps implementation
+  words out. The assistant answers only from that corpus, so it never guesses.
+- **Questions get answered where they are asked.** A user opens the panel on the screen
+  they are stuck on and gets an answer grounded in how the product actually works, with
+  no human in the loop for the questions that have answers.
+- **Requests arrive with their context attached.** When the answer is "the product
+  doesn't do that", the same panel interviews the user about what they are trying to do,
+  what gets in the way, and what done would look like, then hands your team a structured
+  request with the whole conversation. That is exactly the brief an agent needs to build
+  the feature, and it came from the customer instead of a guess.
+
+The human stays where judgement is needed, deciding what to build, and stops being the
+lookup table for how everything works.
 
 ## Quickstart (about 15 minutes)
 
