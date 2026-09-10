@@ -208,6 +208,11 @@ Without an API key the demo answers with a canned reply so you can still click t
 
 ## Development
 
+CI runs the JavaScript package on Node 24 (npm 11), and the committed lockfile is
+written by that npm. Older npm versions rewrite the `libc` fields of platform
+binaries and fail the lockfile-drift check, so use Node 24 when you touch `js/`.
+
+
 ```bash
 cd python && uv sync && uv run pytest && uv run ruff check src tests
 cd js && npm install && npm test && npm run typecheck && npm run build
