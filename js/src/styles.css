@@ -455,3 +455,21 @@
 .askpanel-transcript-log .askpanel-msg {
   max-width: 100%;
 }
+
+.askpanel-attribution {
+  border-top: 1px solid var(--askpanel-border);
+  padding: 6px 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--askpanel-muted);
+}
+
+.askpanel-attribution a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.askpanel-attribution a:hover,
+.askpanel-attribution a:focus-visible {
+  text-decoration: underline;
+}

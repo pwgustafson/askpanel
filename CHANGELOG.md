@@ -4,6 +4,13 @@ Both packages (`askpanel` on PyPI-to-be, `@askpanel/react` on npm-to-be) share a
 Protocol version is 1 throughout; every wire change so far has been additive
 (see `docs/protocol.md` → Versioning).
 
+## 0.1.6 — 2026-09-10
+
+- **React:** a small "Powered by AskPanel" link at the bottom of the panel, on by
+  default. `attribution={false}` hides it; `labels.poweredBy` rewords it;
+  `ASKPANEL_REPO_URL` is exported. Python package unchanged; version bumped in step.
+- **If you're upgrading:** nothing to change unless you don't want the link.
+
 ## 0.1.5 — 2026-09-09
 
 Third host, adopted blind from the public repo with only the README and its links

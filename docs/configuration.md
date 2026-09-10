@@ -334,6 +334,7 @@ The default UI. Accepts every `useAskPanel` option plus:
 | `initialMode` | `"help" \| "interview"` | none | Skip the entry screen and open straight into a mode. |
 | `skipStatus` + `enabled` | `boolean` | — | Hook options, passed through. With `skipStatus` the default panel shows chat entries only if `enabled` is true, and has no starters (they come from `/status`). Most hosts leave the probe on. |
 | `footer` | `ReactNode` | none | Rendered at the bottom of the entry screen (only there), e.g. a "View submitted feedback" link. |
+| `attribution` | `boolean` | `true` | A small "Powered by AskPanel" link to the project at the bottom of every panel view. Set `false` to hide it; the text is `labels.poweredBy`. |
 
 ```tsx
 <AskPanel base="/api/askpanel" open={open} onOpenChange={setOpen} getContext={() => tab} />

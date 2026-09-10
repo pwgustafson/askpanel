@@ -1,4 +1,4 @@
-export { AskPanel, defaultLabels } from "./AskPanel";
+export { AskPanel, defaultLabels, ASKPANEL_REPO_URL } from "./AskPanel";
 export type { AskPanelProps, AskPanelLabels, Entry } from "./AskPanel";
 export { useAskPanel, useAskPanelStatus, clearAskPanelStatusCache } from "./useAskPanel";
 export type {

@@ -1,6 +1,6 @@
 {
   "name": "@askpanel/react",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "In-app help chat and guided feature requests — the React client for AskPanel.",
   "license": "MIT",
   "type": "module",

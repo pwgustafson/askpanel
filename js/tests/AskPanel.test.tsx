@@ -142,6 +142,21 @@ describe("AskPanel", () => {
     expect(screen.queryByText("reply")).toBeNull();
   });
 
+  it("shows a Powered by AskPanel link by default and hides it with attribution={false}", async () => {
+    const fetch = mockFetch({ "/status": () => json(STATUS) });
+    const first = render(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} />);
+    await waitFor(() => screen.getByText("Ask a question"));
+    const link = screen.getByText("Powered by AskPanel") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("https://github.com/pwgustafson/askpanel");
+    expect(link.getAttribute("target")).toBe("_blank");
+    fireEvent.click(screen.getByText("Ask a question"));
+    expect(screen.getByText("Powered by AskPanel")).toBeTruthy(); // every view, not just the entry screen
+    first.unmount();
+    render(<AskPanel base="/api/askpanel" fetch={fetch} open onOpenChange={() => {}} attribution={false} />);
+    await waitFor(() => screen.getByText("Ask a question"));
+    expect(screen.queryByText("Powered by AskPanel")).toBeNull();
+  });
+
   it("renders the footer slot on the entry screen only", async () => {
     const fetch = mockFetch({ "/status": () => json(STATUS) });
     render(

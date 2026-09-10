@@ -42,6 +42,8 @@ export interface AskPanelLabels {
   sentHeading: string;
   sentDefault: string;
   sentDone: string;
+  /** Attribution line at the bottom of the panel (hidden with `attribution={false}`). */
+  poweredBy: string;
   startOver: string;
   errorRetry: string;
   summarizing: string;
@@ -49,6 +51,8 @@ export interface AskPanelLabels {
   youName: string;
   noSummaryHint: string;
 }
+
+export const ASKPANEL_REPO_URL = "https://github.com/pwgustafson/askpanel";
 
 export const defaultLabels: AskPanelLabels = {
   title: "Help",
@@ -78,6 +82,7 @@ export const defaultLabels: AskPanelLabels = {
   sentHeading: "Sent",
   sentDefault: "Thanks — the team has it.",
   sentDone: "Done",
+  poweredBy: "Powered by AskPanel",
   startOver: "Start over",
   errorRetry: "Try again",
   summarizing: "Summarizing…",
@@ -101,6 +106,11 @@ export interface AskPanelProps extends UseAskPanelOptions {
   initialMode?: Mode;
   /** Rendered at the bottom of the entry screen — e.g. a "View submitted feedback" link. */
   footer?: ReactNode;
+  /**
+   * Show a small "Powered by AskPanel" link to the project at the bottom of the panel.
+   * On by default; set `false` to hide it. The text comes from `labels.poweredBy`.
+   */
+  attribution?: boolean;
 }
 
 type View = "entry" | "chat" | "review" | "bug" | "sent";
@@ -115,6 +125,7 @@ export function AskPanel(props: AskPanelProps) {
     className,
     initialMode,
     footer,
+    attribution = true,
     ...hookOptions
   } = props;
   const L = useMemo(() => ({ ...defaultLabels, ...labelOverrides }), [labelOverrides]);
@@ -495,6 +506,13 @@ export function AskPanel(props: AskPanelProps) {
                 {L.sentDone}
               </button>
             </div>
+          </div>
+        ) : null}
+        {attribution ? (
+          <div className="askpanel-attribution">
+            <a href={ASKPANEL_REPO_URL} target="_blank" rel="noopener noreferrer">
+              {L.poweredBy}
+            </a>
           </div>
         ) : null}
       </aside>

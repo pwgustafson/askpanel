@@ -127,6 +127,10 @@ hidden:
 
 Most hosts leave the probe on — it's one cheap GET and it's where starters come from.
 
+**Attribution.** Every view of the panel ends with a small "Powered by AskPanel" link to
+this repository. It is on by default and we appreciate it staying on, but it is your
+product: `attribution={false}` removes it, and `labels.poweredBy` rewords it.
+
 **Extra links.** The entry screen has a `footer` slot for anything else your feedback
 modal used to carry:
 
